@@ -1023,6 +1023,8 @@ def lookup_hint(make: str | None, model_year: int | None, code: str) -> Communit
 
 ### 5.4 NHTSA client (`knowledge/nhtsa.py`)
 
+`Recall` and `Complaint` are defined in `schemas/nhtsa.py` and re-exported here: `Scenario` (§11) references them, and `schemas` may not import `knowledge` (§1).
+
 ```python
 class Recall(Model):
     campaign_number: str; component: str; summary: str
