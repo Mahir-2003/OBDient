@@ -1,0 +1,22 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# local data
+*.db
+evals/transcripts/
+tests/fixtures/recordings/raw/
+
+# python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# os
+.DS_Store

@@ -6,7 +6,7 @@ Sources: [docs/PRD.md](docs/PRD.md) and [SPEC.md](SPEC.md). SPEC wins where they
 
 | # | Milestone | Tier | OpenAI credits | Adapter (OBDLink CX) | Status |
 | --- | --- | --- | --- | --- | --- |
-| M1 | Repo skeleton | v0.1 | none | no | not started |
+| M1 | Repo skeleton | v0.1 | none | no | done |
 | M2 | Vehicle layer | v0.1 | none | no | not started |
 | M3 | Simulator + scenarios | v0.1 | none | no | not started |
 | M4 | Knowledge layer | v0.1 | none | no | not started |
@@ -70,7 +70,7 @@ These are M0 leftovers and setup-checklist items. Each blocks the milestone name
 
 ## M1 — Repo skeleton
 
-**Status:** not started · **Credits:** none · **Adapter:** no
+**Status:** done, except `.env.example`: the deny rule `Read(./.env.*)` blocks Claude from creating it, so Mahir adds it by hand (`OPENAI_API_KEY=`, `OBDIENT_HOME=`) · **Credits:** none · **Adapter:** no
 
 **Creates**
 - `pyproject.toml`, `uv.lock`, `.python-version`, `.gitignore`, `.env.example`, `CLAUDE.md`
