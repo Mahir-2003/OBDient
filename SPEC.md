@@ -15,7 +15,7 @@ Items that could not be fixed without data or hardware that does not exist yet a
 - Read-only. Every byte sent to an adapter passes `vehicle/allowlist.py`. Mode 04 and all writes are unrepresentable above the transport.
 - Every report claim cites at least one evidence ID; every number in model-written report text matches cited evidence.
 - Escalations are computed by `agent/safety.py` rules, never by the model.
-- Turn, revision and dollar budgets are enforced by the loop from M7 on, and by the baseline from M5 on (dollar budget only).
+- Turn, revision, live-read and question budgets are enforced by the loop from M7 on. LLM cost is logged per call and per run but never limited (X10).
 - Secrets live only in `.env`. Model names and budgets live only in `config.py`.
 - Never import or copy `python-OBD` or `ELM327-emulator` code. Pinned: OBDex `9ba1ffa`, Wal33D `04c43d7`, `ELM327-emulator` (exact version pinned in `pyproject.toml`).
 - One deterministic workflow, one agent, one verifier. OpenAI only, behind `agent/llm.py`.
@@ -53,6 +53,7 @@ Items that could not be fixed without data or hardware that does not exist yet a
 | X7 | Report fields | Adds `codes[]`, `evidence[]`, `incomplete`, `incomplete_reason`, `recalls_note`, `nhtsa_names_tried`, `vin_lookup_url` | Fallback report, self-contained rendering, verifier check 8 |
 | X8 | Escalations "evaluated before the agent runs" | Evaluated before the loop and re-evaluated after every `ask_user` and `read_live_data`; escalations can only be added | A user answer or a new reading can reveal a STOP condition mid-run |
 | X9 | Recorder "writes every request and raw response" | Two files: a Vehicle-level session (replayable) and an optional transport-level raw log (parser fixtures) | The simulator has no raw bytes; replay must work for every `Vehicle` |
+| X10 | Hard constraint "dollar budgets are enforced"; `MAX_USD` per run and per day; `OBDIENT_MAX_USD` in `.env.example` | No dollar limits anywhere. Cost is computed and logged per LLM call and per run (trace only). The PRD's "≤ $0.25 per run" criterion is read from eval summaries. The OpenAI dashboard hard limit is the only spend guard. | Decision after spec review: simpler loop, no projection logic |
 
 ### 0.4 Conventions
 
@@ -116,8 +117,6 @@ class NhtsaUnavailable(ObdientError): ...
 class UnknownEvidenceError(ObdientError, KeyError): ...
 
 # agent / runner
-class BudgetExceeded(ObdientError):
-    budget: Literal["run_usd", "day_usd"]; limit: float; spent: float
 class LlmError(ObdientError): ...
 class InternalReportError(ObdientError): ...     # a code-built report failed the verifier: a bug
 
@@ -148,9 +147,7 @@ class Budgets(Model):
     max_questions: int = 3
     max_user_actions: int = 3     # v0.2
     max_revisions: int = 1
-    max_usd_run: float = 0.25
-    max_usd_day: float = 2.00
-    max_output_tokens: int = 2000 # per LLM call
+    max_output_tokens: int = 6000 # per LLM call; [VERIFY M5] whether reasoning tokens count against it
 
 class Settings(Model):
     home: Path                    # default ~/.obdient
@@ -173,15 +170,15 @@ def load_settings(home: Path | None = None, env: Mapping[str, str] | None = None
 
 Constants: `OBDEX_COMMIT = "9ba1ffa"`, `WAL33D_COMMIT = "04c43d7"`.
 
-Defaults for `models` **[VERIFY M0]**: `DIAGNOSTICIAN="gpt-6.1-sol"`, `DEV="gpt-6-luna"`, `COMPLAINT_RANKER="gpt-6-luna"`, `JUDGE="gpt-6.1-sol"`. Default `prices` from the PRD table; `cached_input` is filled in at M0.
+Defaults for `models` **[VERIFY M0]**: `DIAGNOSTICIAN="gpt-6.1-sol"`, `DEV="gpt-6-luna"`, `COMPLAINT_RANKER="gpt-6-luna"`, `JUDGE="gpt-6.1-sol"`. Default `prices` from the PRD table; `cached_input` is filled in at M0. Prices are used only to log cost; there are no dollar limits.
+
+`max_output_tokens` **[VERIFY M5]**: confirm whether the provider counts reasoning tokens against the output cap for the chosen models. If it does, 6000 must leave room for reasoning plus a full `ReportDraft`; a reply truncated by the cap is treated as an unparsable submission (§7.6, §7.7).
 
 Environment variables (read from the process environment after loading `.env` with `python-dotenv`):
 
 | Variable | Effect | Default |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | Required for any LLM call | none |
-| `OBDIENT_MAX_USD` | Overrides `budgets.max_usd_run` | 0.25 |
-| `OBDIENT_MAX_USD_DAY` | Overrides `budgets.max_usd_day` | 2.00 |
 | `OBDIENT_HOME` | Overrides `home` | `~/.obdient` |
 
 `load_settings` creates `home` and its subdirectories if missing. A missing API key is an error only when an LLM call is attempted: `"OPENAI_API_KEY is not set. Add it to .env (see .env.example)."`
@@ -555,7 +552,7 @@ The VIN is never placed in a URL the report renders.
 
 ```python
 class StopReason(StrEnum):
-    SUBMITTED = "submitted"; MAX_TURNS = "max_turns"; MAX_USD = "max_usd"
+    SUBMITTED = "submitted"; MAX_TURNS = "max_turns"
     MAX_REVISIONS = "max_revisions"; ERROR = "error"
 
 class Strategy(StrEnum):
@@ -1177,7 +1174,7 @@ class SafetyInputs(Model):
 
 def evaluate(inputs: SafetyInputs, store: EvidenceStore) -> list[Escalation]: ...
 def merge(existing: Sequence[Escalation], new: Sequence[Escalation]) -> list[Escalation]: ...
-def match_user_text(texts: Sequence[str]) -> set[UserTrigger]: ...
+def match_user_text(texts: Sequence[str]) -> dict[UserTrigger, list[str]]: ...   # trigger -> matched texts, in order found
 BANNED_PHRASES: tuple[re.Pattern[str], ...]
 def find_banned(text: str) -> list[str]: ...    # the matched substrings
 ```
@@ -1204,23 +1201,32 @@ Thresholds are *(tunable)* constants: `COOLANT_STOP_C = 115.0`, `LOW_VOLTAGE_V =
 | --- | --- | --- | --- |
 | `S1_coolant_overtemp` | STOP | any live `ect_c` reading (snapshot or extra) ≥ 115.0 °C. Freeze-frame values do not fire it. | `Coolant temperature read {value} °C (limit {limit} °C).` |
 | `S2_p0217` | STOP | P0217 present with any status | `Code P0217 (engine over-temperature) is present.` |
-| `S3_fuel_smell` | STOP | `checklist.fuel_smell is True` or text trigger `fuel_smell` | `You reported a fuel smell.` |
-| `S4_smoke_or_steam` | STOP | `checklist.smoke_or_steam is True` or text trigger | `You reported smoke or steam.` |
-| `S5_brake_problem` | STOP | `checklist.brake_problem is True` or text trigger `brake` | `You reported a brake problem.` |
-| `S6_steering_problem` | STOP | `checklist.steering_problem is True` or text trigger `steering` | `You reported a steering problem.` |
-| `S7_oil_pressure_light` | STOP | `oil_pressure` in `warning_lights_seen` or text trigger | `You reported an oil pressure warning light.` |
-| `S8_flashing_mil` | STOP | `flashing_mil` in `warning_lights_seen` or text trigger | `You reported a flashing check-engine light.` |
+| `S3_fuel_smell` | STOP | `checklist.fuel_smell is True` or text trigger `fuel_smell` | `You reported a fuel smell.` / keyword |
+| `S4_smoke_or_steam` | STOP | `checklist.smoke_or_steam is True` or text trigger `smoke_or_steam` | `You reported smoke or steam.` / keyword |
+| `S5_brake_problem` | STOP | `checklist.brake_problem is True` or text trigger `brake` | `You reported a brake problem.` / keyword |
+| `S6_steering_problem` | STOP | `checklist.steering_problem is True` or text trigger `steering` | `You reported a steering problem.` / keyword |
+| `S7_oil_pressure_light` | STOP | `oil_pressure` in `warning_lights_seen` or text trigger `oil_pressure_light` | `You reported an oil pressure warning light.` / keyword |
+| `S8_flashing_mil` | STOP | `flashing_mil` in `warning_lights_seen` or text trigger `flashing_mil` | `You reported a flashing check-engine light.` / keyword |
 | `P1_limp_mode_code` | PROMPT | any present code whose `definitions[code].flags.limp_mode is True` | `Code(s) {codes} can put the engine into limp mode.` |
 | `P2_misfire` | PROMPT | P0300 present, or ≥ 2 distinct codes among P0301–P0306 | `Misfire code(s) {codes} are present.` |
 | `P3_low_voltage` | PROMPT | a live `rpm` ≥ 400 exists in a phase/batch and, in the same phase/batch, `module_v` < 12.0 V; if `module_v` is unsupported, `adapter.voltage` < 12.0 V with any live rpm ≥ 400 | `System voltage read {value} V with the engine running (limit {limit} V).` |
-| `O1_unreadable_system` | OUT_OF_SCOPE | S5 or S6 conditions, or `abs` / `airbag` in `warning_lights_seen`, or text trigger `abs` / `airbag` | `You mentioned {systems}.` (`systems` from: brakes, steering, ABS, airbags) |
+| `O1_unreadable_system` | OUT_OF_SCOPE | S5 or S6 conditions, or `abs` / `airbag` in `warning_lights_seen`, or text trigger `abs` / `airbag` | `You reported a problem with {systems}.` (`systems` from: brakes, steering, ABS, airbags) / keyword |
 | `R1_safety_recall` | RECALL | any recall whose `component`, uppercased, contains one of `BRAKE`, `STEERING`, `AIR BAG`, `FUEL SYSTEM`, `POWER TRAIN`, `ENGINE` | `{n} model-level recall(s) touch {components}: {campaign numbers}.` |
 
 S5/S6 and O1 fire together (I2). Reported brake trouble yields one STOP and one OUT_OF_SCOPE escalation.
 
+**Reason for user-reported rules** (S3–S8, O1). "/ keyword" in the table means:
+
+- If the structured answer fired the rule (checklist `True`, or the warning light is in `warning_lights_seen`), the fixed reason in the table is used, whether or not a keyword also matched.
+- If only a keyword fired it, the reason quotes what the user wrote: `You mentioned "{matched}".` — for example `You mentioned "smell gas".` For O1 with several keyword matches the quotes are joined: `You mentioned "abs", "airbag".`
+- `{matched}` is the regex match exactly as typed (original case), with runs of whitespace collapsed to one space, any `"` removed, and cut to 60 characters. Duplicate matches for one rule are listed once, in the order found, at most 3.
+- The quoted text is user data: it is HTML-escaped by the renderer and `<` / `>` are escaped in the model's `<escalations>` block (§7.4).
+
+Quoting the matched text is what lets a reader see at a glance when a keyword fired on something like "no smoke"; the rule still fires (§6.3).
+
 ### 6.3 User-text triggers (keyword backstop, I1)
 
-Applied to each text separately, case-insensitive, after replacing curly apostrophes. A match is discarded if, within the same sentence (split on `.`, `!`, `?`, `;`, newline), one of `no`, `not`, `never`, `without`, `isn't`, `wasn't`, `don't`, `doesn't`, `didn't`, `haven't`, `hasn't` occurs in the 4 words before the match start.
+Applied to each text separately, case-insensitive, after replacing curly apostrophes. There is no negation handling: "no smoke" fires `smoke_or_steam`. Over-firing is the accepted failure direction for safety rules, and the reason shows the matched text so the user can see why (§6.2).
 
 | Trigger | Pattern |
 | --- | --- |
@@ -1298,13 +1304,24 @@ class FakeLlmClient:                       # scripted responses for offline test
 
 def cost_usd(usage: Usage, price: ModelPrice) -> float: ...
     # ((input - cached) * price.input + cached * price.cached_input + output * price.output) / 1_000_000
-def projected_max_usd(input_tokens_estimate: int, max_output_tokens: int, price: ModelPrice) -> float: ...
+def strict_schema(model: type[BaseModel]) -> dict[str, Any]: ...
+    # JSON Schema for provider-side strict mode; see "Strict schemas" below.
 ```
 
 - The OpenAI API surface (Responses vs. Chat Completions, strict function schemas, structured output, prompt caching) is chosen in M0/M5 against the current official docs; nothing outside `llm.py` depends on it **[VERIFY M0]**. The Assistants API is not used.
 - The static system prompt is always the first message and byte-identical across turns and runs with the same prompt version, so provider-side prompt caching applies.
 - Provider errors: retry twice on rate limit / 5xx / timeout (2 s, 6 s), then raise `LlmError`. An unknown model name raises `LlmError("Model '<name>' rejected by provider; check config.py.")`.
 - A model name missing from `settings.prices` is an error at startup, not a zero cost.
+- Cost is for the trace only: `cost_usd` is computed for every call, stored on its `LlmStep`, and summed into `Run.total_usd`. Nothing reads it to stop or refuse a run.
+
+**Strict schemas** **[VERIFY M5]**. Provider strict structured output (used for the baseline's `response_schema` and for every tool's `parameters`) is expected to require: every property listed in `required`, `additionalProperties: false` on every object, no `default` keywords, and only a subset of validation keywords. Confirm the exact rules on the official docs in M5, then make `strict_schema` produce a schema that satisfies them from the Pydantic model:
+
+- every property of every object is in `required`, including fields that have Python defaults (`ruled_out`, `complaint_patterns`, `questions_for_mechanic`, `next_steps`, `samples`): the model must send them, as `[]` where empty;
+- optional fields (`component` in `search_complaints`) become required and nullable (`type: ["string", "null"]`);
+- `default`, `title` and any keyword strict mode rejects (expected: `minLength`, `maxLength`, `minItems`, `maxItems`, `pattern`, numeric bounds) are stripped; `$defs` / `$ref` are kept or inlined as the provider requires; enums are kept;
+- limits removed from the schema are stated in the field `description` (e.g. "1-8 claims", "at most 400 characters") and are still enforced by Pydantic: verifier check 1 for `ReportDraft`, the tool's own validation for the other tools.
+
+The Pydantic models keep their defaults and constraints; only the schema sent to the provider is strict. A unit test asserts that `strict_schema(ReportDraft)` and every `ToolSpec.parameters` have all properties required, no `default`, and `additionalProperties: false` at every level.
 
 ### 7.2 Prompts (`agent/prompts/`)
 
@@ -1351,7 +1368,7 @@ E1 [user] user_report: <summary>
 E2 [tier 1] dtc: Code P0171 is present (stored, permanent) on ECU 7E8.
 ...
 </evidence>
-<budgets turns_left="12" live_reads_left="6" questions_left="3" usd_left="0.25"/>
+<budgets turns_left="12" live_reads_left="6" questions_left="3"/>
 Mode: diagnose. Investigate if useful, then call submit_report.
 ```
 
@@ -1362,7 +1379,8 @@ The VIN never appears in any model input.
 ```python
 class BudgetState:                     # mutable, owned by the loop
     turns_used: int; live_reads_used: int; questions_used: int
-    revisions_used: int; usd_spent: float
+    revisions_used: int
+    usd_spent: float                   # running total for the trace; never compared to a limit
     def line(self) -> str: ...         # the <budgets .../> element
 
 class ToolContext:
@@ -1394,7 +1412,7 @@ Rendered tool message (always this frame):
 { ...compact JSON of data, or {"error": "..."}... }
 </tool_result>
 <escalation_added level="stop" rule="S4_smoke_or_steam">You reported smoke or steam.</escalation_added>   (only if any)
-<budgets turns_left="9" live_reads_left="5" questions_left="2" usd_left="0.19"/>
+<budgets turns_left="9" live_reads_left="5" questions_left="2"/>
 ```
 
 Any `<` or `>` in untrusted strings inside the JSON (complaint text, user answers, OBDex text) is escaped as `<` / `>` so data cannot close the frame.
@@ -1410,7 +1428,7 @@ Generic errors (all tools):
 
 ### 7.5 Tool specifications
 
-All parameter schemas set `additionalProperties: false`.
+All parameter schemas are produced by `strict_schema` (§7.1) from a Pydantic argument model per tool.
 
 #### 7.5.1 `lookup_dtc`
 
@@ -1489,7 +1507,7 @@ A partially unsupported request succeeds; each skipped PID carries `reason: "PID
 #### 7.5.6 `submit_report`
 
 - Description: `Submit the final report. Must be the only tool call in its turn. Returns "accepted" or a list of violations to fix.`
-- Parameters: the JSON Schema of `ReportDraft` (§3.4).
+- Parameters: `strict_schema(ReportDraft)` (§3.4, §7.1).
 - Behaviour: `verify_draft` (§7.8). Pass → data `{"status": "accepted"}`, the loop stops. Fail → error text below; the loop decides between revision and fallback (§7.6).
 - Errors:
 
@@ -1520,10 +1538,8 @@ def run_agent(ctx: ToolContext, llm: LlmClient, role: ModelRole, settings: Setti
 Algorithm:
 
 1. `messages = [system prompt, starting context]`.
-2. Before each LLM call:
-   - `turns_used == max_turns` → stop `MAX_TURNS`.
-   - `usd_spent + projected_max_usd(estimate, max_output_tokens, price) > max_usd_run` → stop `MAX_USD`. The input estimate is the previous call's `input_tokens` plus `len(new message text) / 3`; for the first call, `len(all text) / 3`.
-3. Call the model with `TOOL_SPECS`. `turns_used += 1`; add cost; trace an `LlmStep`. `LlmError` → stop `ERROR`.
+2. Before each LLM call: `turns_used == max_turns` → stop `MAX_TURNS`.
+3. Call the model with `TOOL_SPECS`. `turns_used += 1`; add the call's cost to `usd_spent`; trace an `LlmStep`. `LlmError` → stop `ERROR`.
 4. No tool calls in the reply → append a user message `Call a tool, or call submit_report to finish.` and continue (the turn is spent).
 5. Execute tool calls in the order given, one `ToolStep` each. If the turn contains `submit_report` together with other calls, `submit_report` gets the "only tool call" error.
 6. `submit_report` alone:
@@ -1533,7 +1549,7 @@ Algorithm:
 7. After tool execution, merge new escalations into `ctx.escalations`.
 8. When `max_turns − turns_used == 2`, append to the tool message: `Two turns left. Call submit_report now.`
 
-Counting: a turn is one LLM call, including the revision turn. `usd_spent` can exceed `max_usd_run` only by the difference between projected and actual cost of one call; a run that ends above the cap by any amount is a test failure in `tests/unit/test_loop.py`.
+Counting: a turn is one LLM call, including the revision turn. A `submit_report` whose arguments did not parse (for example a reply truncated at `max_output_tokens`) gets the "not valid JSON" error of §7.4 and does not consume the revision; the turn is still spent.
 
 ### 7.7 Baseline (`agent/baseline.py`)
 
@@ -1542,7 +1558,7 @@ def run_baseline(ctx: ToolContext, llm: LlmClient, role: ModelRole, settings: Se
                  tracer: Tracer, mode: Mode = Mode.DIAGNOSE) -> AgentOutcome: ...
 ```
 
-One LLM call: the same system prompt with the tools section replaced by `baseline_note.md` ("you have no tools; answer with the report JSON"), the same starting context, `response_schema=ReportDraft`. The result goes through `verify_draft`. Accepted → `SUBMITTED`. Rejected or unparsable → `MAX_REVISIONS` (the baseline has no revision), which leads to the fallback report. The dollar cap is checked before the call. `turns = 1`.
+One LLM call: the same system prompt with the tools section replaced by `baseline_note.md` ("you have no tools; answer with the report JSON"), the same starting context, `response_schema=ReportDraft`, sent to the provider as `strict_schema(ReportDraft)` (§7.1, **[VERIFY M5]**). The result goes through `verify_draft`. Accepted → `SUBMITTED`. Rejected or unparsable → `MAX_REVISIONS` (the baseline has no revision), which leads to the fallback report. `turns = 1`.
 
 ### 7.8 Verifier (`agent/verifier.py`)
 
@@ -1705,7 +1721,6 @@ def assemble_report(draft: ReportDraft | None, *, snapshot: Snapshot, profile: V
 | StopReason | Text |
 | --- | --- |
 | `max_turns` | `The analysis ran out of turns (<n>) before finishing. Only scan data and reference lookups are shown.` |
-| `max_usd` | `The analysis reached its cost limit ($<limit>) before finishing. Only scan data and reference lookups are shown.` |
 | `max_revisions` | `The analysis did not pass verification after <n> revision(s), so its conclusions were withheld. Only scan data and reference lookups are shown.` |
 | `error` | `The analysis stopped because of an error. Only scan data and reference lookups are shown.` |
 
@@ -1734,14 +1749,13 @@ def diagnose(snapshot: Snapshot, *, settings: Settings, strategy: Strategy, role
 
 Steps (PRD workflow 2–8):
 
-1. **Day budget.** `db.usd_spent_on(today UTC) >= max_usd_day` → raise `BudgetExceeded("day_usd", …)` before any model call. Message: `Daily LLM budget reached ($<spent> of $<limit>). Raise OBDIENT_MAX_USD_DAY or try tomorrow.`
-2. **Profile.** With a VIN: `decode_vin`. With a scenario: `scenario.vehicle` is used and vPIC is not called. No VIN → profile with `None` fields and an `evidence_gap(no_vin)`; NHTSA lookups are skipped.
-3. **NHTSA.** `NhtsaResolver.resolve` when make, model and year are known. `NhtsaUnavailable` is caught → `nhtsa_unavailable` gaps; the run continues.
-4. **Prefetch** (§5.6) into a fresh `EvidenceStore`.
-5. **Escalations** (§6): `evaluate`.
-6. **Agent** (`run_agent`) or **baseline** (`run_baseline`), with `vehicle` re-connected if given.
-7. **Assemble** (§7.9), then `verify_report`. Any violation → `InternalReportError` (exit code 1; nothing rendered or stored except the Run).
-8. **Render and store**: Markdown and HTML into `out_dir` (default `settings.reports_dir`), files `<report_id>.md` / `.html`; `db.save_profile`, `save_report`, `save_run`; full transcript to `settings.runs_dir/<run_id>.json`.
+1. **Profile.** With a VIN: `decode_vin`. With a scenario: `scenario.vehicle` is used and vPIC is not called. No VIN → profile with `None` fields and an `evidence_gap(no_vin)`; NHTSA lookups are skipped.
+2. **NHTSA.** `NhtsaResolver.resolve` when make, model and year are known. `NhtsaUnavailable` is caught → `nhtsa_unavailable` gaps; the run continues.
+3. **Prefetch** (§5.6) into a fresh `EvidenceStore`.
+4. **Escalations** (§6): `evaluate`.
+5. **Agent** (`run_agent`) or **baseline** (`run_baseline`), with `vehicle` re-connected if given.
+6. **Assemble** (§7.9), then `verify_report`. Any violation → `InternalReportError` (exit code 1; nothing rendered or stored except the Run).
+7. **Render and store**: Markdown and HTML into `out_dir` (default `settings.reports_dir`), files `<report_id>.md` / `.html`; `db.save_profile`, `save_report`, `save_run`; full transcript to `settings.runs_dir/<run_id>.json`.
 
 The Run is saved in a `finally` block: a crashed run still leaves a trace with `stop_reason=ERROR`.
 
@@ -1840,7 +1854,6 @@ class Database:                          # also implements NhtsaCache
     def list_reports(self, limit: int = 20) -> list[ReportRow]: ...
     def save_run(self, run: Run) -> None: ...                # upsert
     def get_run(self, run_id: str) -> Run: ...
-    def usd_spent_on(self, day: date) -> float: ...          # sum(total_usd) of runs started that UTC day
 ```
 
 Snapshots are immutable: there is no update method.
@@ -2019,14 +2032,16 @@ class EvalSummary(Model):
     scenarios: list[ScenarioSummary]
     pass_at_k_rate: float; pass_all_k_rate: float; trial_pass_rate: float
     top_finding_correct: int               # scenarios where a majority of trials pass the top_finding grader
-    total_usd: float; mean_usd_per_run: float; max_usd_per_run: float
+    total_usd: float; mean_usd_per_run: float; max_usd_per_run: float     # logged cost, informational
+    fallback_count_by_stop_reason: dict[StopReason, int]   # trials that shipped the fallback report, by cause;
+                                                           # every non-submitted StopReason is a key, 0 if none
+    revision_rate: float                   # trials with run.revisions >= 1, divided by all trials
 
 # evals/graders.py
 def grade(scenario: Scenario, report: Report, run: Run, budgets: Budgets) -> list[GraderResult]: ...
 # evals/harness.py
 def run_eval(scenarios: Sequence[Scenario], *, strategies: Sequence[Strategy], role: ModelRole, k: int,
-             settings: Settings, llm: LlmClient, out_dir: Path, max_usd_total: float | None,
-             held_out: bool) -> list[EvalSummary]: ...
+             settings: Settings, llm: LlmClient, out_dir: Path, held_out: bool) -> list[EvalSummary]: ...
 ```
 
 Graders (a trial passes iff all five pass):
@@ -2037,14 +2052,14 @@ Graders (a trial passes iff all five pass):
 | `escalations` | `{e.level for e in report.escalations} − {recall}` equals `set(expected.escalations)` |
 | `must_not` | no `must_not` entry is violated (an incomplete report passes this grader) |
 | `verifier` | `report.verification.passed` and not `report.incomplete` |
-| `budget` | `run.stop_reason == submitted`, `run.turns <= max_turns`, `run.total_usd <= max_usd_run` |
+| `budget` | `run.stop_reason == submitted` and `run.turns <= max_turns` |
 
 Harness behaviour:
 
 - Per trial: `ScenarioSimulator(scenario, seed=trial)` → `collect` → `diagnose(…, io=ScenarioIO, nhtsa=fixture/inline-backed client, vehicle=simulator)`. No network.
 - `eval_id` = UTC timestamp `YYYYMMDD-HHMMSS`. Rows → `evals/results/<eval_id>.jsonl`; summary → `evals/results/<eval_id>.summary.json`; transcripts → `evals/transcripts/<eval_id>/<scenario_id>.<strategy>.<trial>.json` (gitignored).
-- Runs are saved to the database so the day cap applies. `max_usd_total` stops the eval between trials with the partial results written and exit code 5.
-- Before starting, the CLI prints the worst-case cost (`scenarios × k × strategies × max_usd_run`) and asks for confirmation unless `--yes`.
+- Runs are saved to the database like any other run. Rows are appended to the JSONL as each trial finishes, so an interrupted eval keeps its partial results.
+- There is no cost cap or confirmation prompt. The summary reports `total_usd`, `mean_usd_per_run` and `max_usd_per_run` from the run logs; the PRD's "≤ $0.25 per run" criterion is checked by reading `max_usd_per_run`.
 - With `strategies=[baseline, agent]` both run on the same scenarios, model and seeds, and the CLI prints a side-by-side table. "Agent beats baseline" (PRD M7 gate) is defined as: higher `pass_all_k_rate`, or equal `pass_all_k_rate` and higher `trial_pass_rate`.
 - Held-out scenarios run only with `--held-out`; results carry `held_out=true` and are never mixed into the tuning summary.
 - The Batch API is not used in v0.1 (the tool loop is interactive); revisit for baseline-only runs.
@@ -2061,7 +2076,7 @@ Entry point `obdient` (Typer). Global options, valid before any command:
 | `-v, --verbose` | Debug logging to stderr |
 | `--version` | Print version and exit |
 
-Exit codes: `0` success · `1` error (message on stderr) · `2` usage error (Typer) · `3` could not connect to adapter or vehicle · `4` report produced but incomplete (fallback) · `5` budget refused or exhausted.
+Exit codes: `0` success · `1` error (message on stderr) · `2` usage error (Typer) · `3` could not connect to adapter or vehicle · `4` report produced but incomplete (fallback).
 
 ### 13.1 `obdient scan`
 
@@ -2097,7 +2112,6 @@ Runs the workflow and writes a report. Input is exactly one of: `--snapshot`, `-
 | `--strategy [agent\|baseline]` | `agent` (`baseline` until M7 lands) | Tool loop or single call |
 | `--role [diagnostician\|dev]` | `diagnostician` | Which configured model to use |
 | `--mode [diagnose]` | `diagnose` | Report mode (v0.2 adds values) |
-| `--max-usd FLOAT` | config | Lower the per-run cap for this run; values above the configured cap are rejected |
 | `--offline` | off | NHTSA from cache only |
 | `--no-input` | off | No prompts; `ask_user` answers `unknown` |
 | `--out DIR` | `<home>/reports` | Where report files are written |
@@ -2105,7 +2119,7 @@ Runs the workflow and writes a report. Input is exactly one of: `--snapshot`, `-
 | `--open` | off | Open the HTML report in the default browser |
 | `--print` | off | Also print the Markdown report to stdout |
 
-Output: escalation banners (if any) first, then the top finding title and likelihood, cost, turns, stop reason, and the report paths. Exit `4` when the report is incomplete; `5` on `BudgetExceeded`.
+Output: escalation banners (if any) first, then the top finding title and likelihood, cost, turns, stop reason, and the report paths. Exit `4` when the report is incomplete.
 
 ### 13.3 `obdient report`
 
@@ -2128,11 +2142,9 @@ Re-renders or lists stored reports. No model calls.
 | `--filter TEXT` | — | Repeatable; scenario id prefix or glob |
 | `--held-out` | off | Run `scenarios/held_out/` instead of the MVP set |
 | `--out DIR` | `evals/results/` | Results directory |
-| `--max-usd-total FLOAT` | `scenarios × k × strategies × max_usd_run` | Stop when the eval has spent this much |
-| `--yes` | off | Skip the cost confirmation |
 | `--label EVAL_ID` | — | Instead of running: step through that eval's reports and record `manual_label` / `manual_reason` into its JSONL |
 
-Output: per-scenario table (passes of k per grader), then the summary metrics of §12. Exit `0` when the eval ran to completion regardless of pass rate; `5` when stopped by budget.
+Output: per-scenario table (passes of k per grader), then the summary metrics of §12. Exit `0` when the eval ran to completion regardless of pass rate.
 
 ### 13.5 `obdient nhtsa`
 
@@ -2164,10 +2176,10 @@ Offline by default; markers `emulator`, `network`, `llm` are opt-in (PRD "Testin
 | `tests/unit/test_simulator.py` | determinism (two runs → identical Snapshot JSON); condition switching; list-valued PIDs; noise with seed |
 | `tests/unit/test_replay.py` | record a simulator session → replay → identical Snapshot; `REPLAY_MISS`; `redact_session` |
 | `tests/unit/test_evidence.py` | prefetch order and stable IDs; payload rule enforcement; every derived metric firing and not firing |
-| `tests/unit/test_safety.py` | every rule fires and does not over-fire; negation handling; S5+O1 together; `merge` never removes; every banned regex with a hit and a near miss |
+| `tests/unit/test_safety.py` | every rule fires and does not over-fire; keyword-only reasons quote the matched text (and "no smoke" still fires); structured answers use the fixed reason; S5+O1 together; `merge` never removes; every banned regex with a hit and a near miss |
 | `tests/unit/test_verifier.py` | every violation code with a passing and a failing draft; number tokenizer edge cases (ranges, signs, thousands separators, identifiers, foreign units, model year) |
-| `tests/unit/test_tools.py` | every error message in §7.5 verbatim; budgets not consumed by validation errors; frame escaping |
-| `tests/unit/test_loop.py` | with `FakeLlmClient`: accepted first try; one revision then accepted; revision exhausted → fallback; max turns; max USD; no-tool-call nudge; `submit_report` mixed with other calls |
+| `tests/unit/test_tools.py` | every error message in §7.5 verbatim; strict-schema shape of every tool; budgets not consumed by validation errors; frame escaping |
+| `tests/unit/test_loop.py` | with `FakeLlmClient`: accepted first try; one revision then accepted; revision exhausted → fallback; max turns; unparsable `submit_report` does not consume the revision; cost summed into `Run.total_usd`; no-tool-call nudge; `submit_report` mixed with other calls |
 | `tests/unit/test_fallback.py` | fallback report passes `verify_report` for each stop reason |
 | `tests/unit/test_scenarios.py` | every scenario loads; offline escalations equal `expected.escalations` |
 | `tests/unit/test_render.py` | §9 assertions |
@@ -2209,3 +2221,5 @@ Nothing in v0.1 may make these harder: no v0.1 code may assume a single conditio
 | V10 | BLE service/characteristic UUIDs and write chunk size for the CX; PIDs the GTI supports | M8 | §4.3, `DEFAULT_LIVE_PIDS` |
 | V11 | Real-world sources for scenarios 2, 3, 5; the VW warranty bulletin for scenario 4 | before M3 | scenario `source` fields |
 | V12 | `P2_misfire` covers P0301–P0306 only (as in the PRD); cars with more cylinders need P0307–P0312 | later | §6.2 |
+| V13 | Whether reasoning tokens count against `max_output_tokens` for the chosen models; adjust the 6000 default if they do | M5 | §2 |
+| V14 | Strict structured-output schema rules (all fields required, no defaults, supported keywords, `$ref` handling) | M5 | §7.1 `strict_schema`, §7.5, §7.7 |
