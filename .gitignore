@@ -20,3 +20,6 @@ build/
 
 # os
 .DS_Store
+
+# written by ELM327-emulator during emulator tests
+elm.log
