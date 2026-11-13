@@ -27,7 +27,10 @@ SPEC.md is the source of truth; PLAN.md says what each milestone builds and its 
 
 - NHTSA recalls use "GTI", vPIC says "Golf GTI": always go through `NhtsaResolver`.
 - OBD cannot report a flashing MIL; ask the user.
-- Emulator default response delay is 0.5 s; set delay 0 in tests.
+- Emulator: `delay` defaults to 0, but `ATZ` and `ATDPN` each take 0.5 s and `0100` takes 1.5 s, so one `connect()` costs about 2.5 s.
+- Emulator sends trouble codes without the CAN count byte (`43 01 71`); `decode_dtcs` accepts both forms (SPEC V15).
+- Emulator state lives partly in module globals (`elm.obd_message.DTC_STORED`); mutate in place and restore.
+- `ruff format` rewrites Python blocks inside Markdown; `*.md` is excluded in pyproject.toml. Keep it excluded.
 - Wal33D lookups: VW make + code only, never OTHER.
 - `schemas/__init__.py` must stay empty: `config` imports `schemas.common` and `schemas.run` imports `config`.
 - `uv` here is the pip-installed wheel under pyenv's 3.12; Homebrew builds it from source on this Mac.

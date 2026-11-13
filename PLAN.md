@@ -7,7 +7,7 @@ Sources: [docs/PRD.md](docs/PRD.md) and [SPEC.md](SPEC.md). SPEC wins where they
 | # | Milestone | Tier | OpenAI credits | Adapter (OBDLink CX) | Status |
 | --- | --- | --- | --- | --- | --- |
 | M1 | Repo skeleton | v0.1 | none | no | done |
-| M2 | Vehicle layer | v0.1 | none | no | not started |
+| M2 | Vehicle layer | v0.1 | none | no | done |
 | M3 | Simulator + scenarios | v0.1 | none | no | not started |
 | M4 | Knowledge layer | v0.1 | none | no | not started |
 | M5 | Baseline | v0.1 | **spends** (a few single calls) | no | not started |
@@ -98,7 +98,7 @@ These are M0 leftovers and setup-checklist items. Each blocks the milestone name
 
 ## M2 — Vehicle layer
 
-**Status:** not started · **Credits:** none · **Adapter:** no
+**Status:** done · **Credits:** none · **Adapter:** no
 
 **Creates**
 - `src/obdient/vehicle/`: `__init__.py`, `base.py`, `allowlist.py`, `pids.py`, `parsers.py`, `elm327.py`

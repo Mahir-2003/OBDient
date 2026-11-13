@@ -1,0 +1,48 @@
+{
+  "_comment": "Hand-written adapter replies: the bytes between a request and the '>' prompt. 'tx' is the request, 'rx' the reply, 'headers' whether ATH1 was in force. M8 adds real captures next to this file.",
+  "rpm_single_frame": {"tx": "010C", "headers": true, "rx": "7E8 04 41 0C 0C 30\r\r"},
+  "rpm_spaces_off": {"tx": "010C", "headers": true, "rx": "7E804410C0C30\r\r"},
+  "rpm_searching": {"tx": "0100", "headers": true, "rx": "SEARCHING...\r7E8 06 41 00 BE 3F A8 13\r\r"},
+  "rpm_two_ecus": {"tx": "010C", "headers": true, "rx": "7E9 04 41 0C 0C 30\r7E8 04 41 0C 0C 34\r\r"},
+  "vin_multi_frame": {
+    "tx": "0902",
+    "headers": true,
+    "rx": "7E8 10 14 49 02 01 57 56 57\r7E8 21 5A 5A 5A 41 55 5A 4A\r7E8 22 57 30 30 30 30 30 30\r\r"
+  },
+  "vin_out_of_order": {
+    "tx": "0902",
+    "headers": true,
+    "rx": "7E8 10 14 49 02 01 57 56 57\r7E8 22 57 30 30 30 30 30 30\r7E8 21 5A 5A 5A 41 55 5A 4A\r\r"
+  },
+  "vin_missing_frame": {
+    "tx": "0902",
+    "headers": true,
+    "rx": "7E8 10 14 49 02 01 57 56 57\r7E8 21 5A 5A 5A 41 55 5A 4A\r\r"
+  },
+  "vin_two_ecus_interleaved": {
+    "tx": "0902",
+    "headers": true,
+    "rx": "7E8 10 14 49 02 01 57 56 57\r7E9 03 7F 09 11\r7E8 21 5A 5A 5A 41 55 5A 4A\r7E8 22 57 30 30 30 30 30 30\r\r"
+  },
+  "multi_pid": {"tx": "010C0D05", "headers": true, "rx": "7E8 10 08 41 0C 0C 30 0D 00\r7E8 21 05 82 AA AA AA AA AA\r\r"},
+  "dtcs_one": {"tx": "03", "headers": true, "rx": "7E8 04 43 01 01 71\r\r"},
+  "dtcs_none": {"tx": "03", "headers": true, "rx": "7E8 02 43 00\r\r"},
+  "dtcs_four_multi_frame": {
+    "tx": "03",
+    "headers": true,
+    "rx": "7E8 10 0A 43 04 01 71 03 00\r7E8 21 03 02 C1 00 00 00 00\r\r"
+  },
+  "negative_response": {"tx": "0902", "headers": true, "rx": "7E8 03 7F 09 12\r\r"},
+  "no_data": {"tx": "0A", "headers": true, "rx": "NO DATA\r\r"},
+  "rpm_headers_off": {"tx": "010C", "headers": false, "rx": "41 0C 0C 30\r\r"},
+  "vin_headers_off": {
+    "tx": "0902",
+    "headers": false,
+    "rx": "014\r0: 49 02 01 57 56 57\r1: 5A 5A 5A 41 55 5A 4A\r2: 57 30 30 30 30 30 30\r\r"
+  },
+  "vin_headers_off_spaces_off": {
+    "tx": "0902",
+    "headers": false,
+    "rx": "014\r0:490201575657\r1:5A5A5A41555A4A\r2:57303030303030\r\r"
+  }
+}

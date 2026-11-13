@@ -30,7 +30,7 @@ class ForbiddenCommandError(ObdientError):
         self.command = command
         self.reason = reason
         super().__init__(
-            f"Refused '{command}' ({reason.value}). OBDient is read-only: only OBD modes "
+            f"Refused {command!r} ({reason.value}). OBDient is read-only: only OBD modes "
             "01, 02, 03, 07, 09, 0A and a fixed AT/ST setup list may be sent."
         )
 

@@ -2214,14 +2214,15 @@ Nothing in v0.1 may make these harder: no v0.1 code may assume a single conditio
 | V1 | OpenAI model IDs, prices (incl. cached input), API surface for tools + structured output | M0 | §2, §7.1 |
 | V2 | NHTSA products endpoint behaviour | M0 | §5.5 step 3 (`nhtsa_products_enabled`) |
 | V3 | Emulator over raw TCP with `DTC_STORED = ['0171']`; exact emulator version to pin | M0 | §4.2 proof test |
-| V4 | Final AT/ST list after reading CX documentation; any STN-specific setup | M2 / M8 | §4.2 table, §4.4 sequence |
-| V5 | Byte lengths of length-only PIDs against SAE J1979 | M2 | §4.5 |
+| V4 | Final AT/ST list after reading CX documentation; any STN-specific setup. *M2: unchanged; the emulator needed nothing outside the list. The CX part stays open.* | M2 / M8 | §4.2 table, §4.4 sequence |
+| V5 | Byte lengths of length-only PIDs against SAE J1979. *M2: entered from the published PID table, not yet checked against the standard or OBDex; still open.* | M2 | §4.5 |
 | V6 | OBDex YAML field names; whether sources carry a type; `MANUFACTURER_DOMAINS` | M4 | §5.2 |
 | V7 | NHTSA JSON field names against the spike fixtures | M4 | §5.4 |
 | V8 | Escalation thresholds (115 °C, 12.0 V) and derived-metric thresholds | M4, then evals | §6.2, §5.6 |
 | V9 | Whether OBDex limp-mode flags make `P1_limp_mode_code` fire on MVP scenarios that the PRD expects to be calm (s01, s06, s07) | M4 | §11 expected escalations; if it over-fires, narrow P1 and record the change here |
 | V10 | BLE service/characteristic UUIDs and write chunk size for the CX; PIDs the GTI supports | M8 | §4.3, `DEFAULT_LIVE_PIDS` |
 | V11 | Real-world sources for scenarios 2, 3, 5; the VW warranty bulletin for scenario 4 | before M3 | scenario `source` fields |
+| V15 | Mode 03 / 07 / 0A framing: SPEC says `<SID> <count> <pairs>`; ELM327-emulator 4.0.0 sends `<SID> <pairs>`. `decode_dtcs` accepts both by length parity. Confirm on the GTI and drop the no-count branch if the car matches SPEC. | M8 | §4.5 |
 | V12 | `P2_misfire` covers P0301–P0306 only (as in the PRD); cars with more cylinders need P0307–P0312 | later | §6.2 |
 | V13 | Whether reasoning tokens count against `max_output_tokens` for the chosen models; adjust the 6000 default if they do | M5 | §2 |
 | V14 | Strict structured-output schema rules (all fields required, no defaults, supported keywords, `$ref` handling) | M5 | §7.1 `strict_schema`, §7.5, §7.7 |
