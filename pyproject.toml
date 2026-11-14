@@ -7,6 +7,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "pydantic>=2.9",
     "python-dotenv>=1.0",
+    "pyyaml>=6.0",
     "typer>=0.12",
 ]
 
@@ -20,6 +21,7 @@ dev = [
     "pyright>=1.1.380",
     "pytest>=8.0",
     "ruff>=0.6",
+    "types-pyyaml>=6.0.12.20261113",
 ]
 
 [build-system]
@@ -47,12 +49,14 @@ ignore = [
 
 [tool.pyright]
 include = ["src", "tests"]
+extraPaths = ["src", "tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 strict = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = "-m 'not emulator and not network and not llm'"
 markers = [
     "emulator: needs ELM327-emulator running on a local TCP port",

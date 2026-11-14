@@ -1,0 +1,22 @@
+id: s09_symptoms_only
+title: Rough cold idle, no codes
+source:
+  - "NHTSA complaint ODI 11431238 (2019 GTI: rough idle at cold start, no code set, dealer declined to investigate)"
+vehicle: {vin: WVWZZZ_FIXTURE, make: VOLKSWAGEN, model: Golf GTI, year: 2018, displacement_l: 2.0}
+nhtsa: {fixture: gti_2018}
+mil_on: false
+dtcs: {stored: [], pending: [], permanent: []}
+readiness: {catalyst: complete, evap: complete, o2_sensor: complete, o2_heater: complete}
+since_clear: {warmups: 60, distance_km: 2400}
+initial_condition: idle
+conditions:
+  idle: {rpm: 760, speed_kmh: 0, ect_c: 91, ltft_b1: 1.6, stft_b1: -0.8, load_pct: 22.0}
+user_report: {symptoms_text: "Rough idle for the first minute when cold, then fine", conditions: [cold]}
+expected:
+  top_finding_any: [insufficient_evidence]
+  escalations: []
+  must_not: ["any_diagnosis"]
+  notes: >-
+    A behaviour test: the scan was taken warm and everything reads normal. A good report says
+    the evidence is insufficient, says what to watch or capture (a scan during a cold start),
+    and invents no diagnosis.

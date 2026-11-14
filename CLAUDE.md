@@ -34,3 +34,8 @@ SPEC.md is the source of truth; PLAN.md says what each milestone builds and its 
 - Wal33D lookups: VW make + code only, never OTHER.
 - `schemas/__init__.py` must stay empty: `config` imports `schemas.common` and `schemas.run` imports `config`.
 - `uv` here is the pip-installed wheel under pyenv's 3.12; Homebrew builds it from source on this Mac.
+- The 2018 GTI has no MAF sensor (SPEC X12, V16): don't add `maf_gs` to 2018 scenarios; `s02` is a 2013 GTI for that reason.
+- Scenario files: every condition must define the same PIDs, and a live-readable PID in `freeze_frame` must also be in the conditions, or the simulator records `NO DATA` for it.
+- Simulator snapshots all carry `captured_at` 2026-01-01 (`SIMULATED_EPOCH`); "latest" in the database means last stored.
+- Test helpers are in `tests/support.py` (`from support import ...`); pytest `pythonpath` and pyright `extraPaths` both list `tests`.
+- Pydantic reports only the first branch of a failed union; `load_scenario` therefore lists several problems per file.

@@ -1,0 +1,25 @@
+id: s03_coil_cyl2
+title: Ignition coil failure, cylinder 2
+source:
+  # VW Technical Bulletin 01-15-28, Engine, Misfire Diagnostic Aid (all gasoline engines
+  # 2008-2016): swap plugs and coils between cylinders and see whether the misfire follows.
+  - https://static.nhtsa.gov/odi/tsbs/2015/MC-10122144-9999.pdf
+  - "NHTSA complaint ODI 10897865 (2016 GTI, repeated misfire with loss of performance)"
+vehicle: {vin: WVWZZZ_FIXTURE, make: VOLKSWAGEN, model: Golf GTI, year: 2018, displacement_l: 2.0}
+nhtsa: {fixture: gti_2018}
+dtcs: {stored: [P0300, P0302], pending: [], permanent: []}
+freeze_frame: {trigger: P0302, rpm: 2900, load_pct: 71.0, speed_kmh: 88, ect_c: 92, ltft_b1: 1.6, stft_b1: 3.1}
+readiness: {catalyst: complete, evap: complete, o2_sensor: complete, o2_heater: complete}
+since_clear: {warmups: 22, distance_km: 610}
+initial_condition: idle
+conditions:
+  idle: {rpm: [720, 790, 750], load_pct: 24.3, ltft_b1: 1.6, stft_b1: 2.3, ect_c: 90, speed_kmh: 0}
+user_report: {symptoms_text: "Shudders when I pull away, check engine light is on steady", flashing_mil: false}
+expected:
+  top_finding_any: [ignition_coil_or_plug]
+  escalations: [prompt]  # P2_misfire (P0300 present). Provisional until M4 runs the rules.
+  must_not: ["top_is:o2_sensor_fault", "driving_test"]
+  notes: >-
+    A good report suggests swapping the cylinder 2 coil with another cylinder's and
+    re-reading the codes to see whether the misfire moves, and does not recommend replacing
+    all coils and plugs at once.

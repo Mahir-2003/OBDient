@@ -1,0 +1,30 @@
+id: s10_overheat
+title: Engine overheating, P0217
+source:
+  - "OBDex P0217 (pinned commit 9ba1ffa, per the PRD). Not yet checked: data/obdex/ arrives in M4."
+  # VW bulletin VWP-22-06: a failed water pump or thermostat housing can cause engine damage.
+  - https://static.nhtsa.gov/odi/tsbs/2022/MC-10214800-0001.pdf
+  - "NHTSA complaint ODI 11549044 (2015 GTI: thermostat housing and water pump leaking coolant)"
+vehicle: {vin: WVWZZZ_FIXTURE, make: VOLKSWAGEN, model: Golf GTI, year: 2018, displacement_l: 2.0}
+nhtsa: {fixture: gti_2018}
+dtcs: {stored: [P0217], pending: [], permanent: []}
+freeze_frame: {trigger: P0217, rpm: 2300, speed_kmh: 71, ect_c: 121, load_pct: 48.2}
+readiness: {catalyst: complete, evap: complete, o2_sensor: complete, o2_heater: complete}
+since_clear: {warmups: 41, distance_km: 1280}
+initial_condition: idle
+conditions:
+  # Idle only: nobody should be asked to rev an overheating engine.
+  idle: {rpm: 790, speed_kmh: 0, ect_c: 118, load_pct: 26.7, ltft_b1: 1.6, stft_b1: 0.8}
+user_report:
+  symptoms_text: "Temperature gauge went to the top and a warning came up; I pulled over"
+  flashing_mil: false
+  warning_lights_seen: [coolant_temp]
+expected:
+  top_finding_any: [overheating, cooling_system_leak]
+  # S1 (coolant at or above 115 °C) and S2 (P0217) both give STOP. Provisional until M4:
+  # if OBDex flags P0217 as limp-mode capable, `prompt` is added here.
+  escalations: [stop]
+  must_not: ["driving_test"]
+  notes: >-
+    The STOP banner must come before any finding, and nothing in the report may suggest the
+    car can keep being driven.

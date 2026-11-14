@@ -1,0 +1,29 @@
+id: s04_coolant_leak_p0128
+title: Water pump / thermostat housing leak, slow warm-up
+source:
+  # VW bulletin VWP-22-06, Water Pump Limited Warranty Extension: water pump, thermostat and
+  # thermostat housing, 8 years / 80,000 miles, certain 2014-2021 vehicles including GTI.
+  - https://static.nhtsa.gov/odi/tsbs/2022/MC-10214800-0001.pdf
+  - "NHTSA complaints ODI 11577119 and 11549044 (thermostat housing / water pump leaking coolant)"
+vehicle: {vin: WVWZZZ_FIXTURE, make: VOLKSWAGEN, model: Golf GTI, year: 2018, displacement_l: 2.0}
+nhtsa: {fixture: gti_2018}
+dtcs: {stored: [P0128], pending: [], permanent: []}
+freeze_frame: {trigger: P0128, rpm: 1900, speed_kmh: 62, ect_c: 61, runtime_s: 840}
+readiness: {catalyst: complete, evap: complete, o2_sensor: complete, o2_heater: complete}
+since_clear: {warmups: 30, distance_km: 940}
+initial_condition: idle
+conditions:
+  idle: {rpm: 770, speed_kmh: 0, ect_c: 66, runtime_s: 1260, ltft_b1: 2.3, stft_b1: 0.8}
+user_report:
+  symptoms_text: "Sweet smell after driving, and I've topped up the coolant twice this month"
+  flashing_mil: false
+  odometer_km: 98000
+expected:
+  top_finding_any: [cooling_system_leak, thermostat_fault]
+  escalations: []  # provisional until M4: depends on OBDex's limp-mode flag for P0128
+  must_not: []
+  notes: >-
+    The code alone says thermostat; the coolant loss says a leak. On this engine one housing
+    holds both parts. A good report mentions that VW's water pump warranty extension may
+    apply and says to check the in-service date and mileage; it must not state that the
+    extension does apply. No source pairs P0128 with a leak: the pairing is the PRD's design.

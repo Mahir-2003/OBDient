@@ -8,7 +8,7 @@ Sources: [docs/PRD.md](docs/PRD.md) and [SPEC.md](SPEC.md). SPEC wins where they
 | --- | --- | --- | --- | --- | --- |
 | M1 | Repo skeleton | v0.1 | none | no | done |
 | M2 | Vehicle layer | v0.1 | none | no | done |
-| M3 | Simulator + scenarios | v0.1 | none | no | not started |
+| M3 | Simulator + scenarios | v0.1 | none | no | done |
 | M4 | Knowledge layer | v0.1 | none | no | not started |
 | M5 | Baseline | v0.1 | **spends** (a few single calls) | no | not started |
 | M6 | Verifier + evals | v0.1 | **spends** (baseline eval, 30 runs) | no | not started |
@@ -49,7 +49,7 @@ These are M0 leftovers and setup-checklist items. Each blocks the milestone name
 | `ELM327-emulator` exact version to pin; raw-TCP spike with `DTC_STORED = ['0171']` (V3) | M1 (pin), M2 (tests) |
 | OpenAI model IDs, prices including cached input, API surface (V1) | M1 (config defaults), M5 |
 | NHTSA products endpoint behaviour (V2); `nhtsa_products_enabled` stays `False` until answered | M4 |
-| Real-world sources for scenarios 2, 3, 5; the VW warranty bulletin for scenario 4 (V11) | M3 |
+| ~~Real-world sources for scenarios 2, 3, 5; the VW warranty bulletin for scenario 4 (V11)~~ done in M3 | — |
 | NHTSA spike responses in `tests/fixtures/nhtsa/gti_2018/`, VIN replaced | M4 |
 | `data/obdex/` (commit `9ba1ffa`) and the Wal33D VW subset (commit `04c43d7`), each with its LICENSE | M4 |
 | `OPENAI_API_KEY` in `.env`; hard spend limit set in the dashboard | M5 |
@@ -129,7 +129,7 @@ These are M0 leftovers and setup-checklist items. Each blocks the milestone name
 
 ## M3 — Simulator + scenarios
 
-**Status:** not started · **Credits:** none · **Adapter:** no
+**Status:** done (expected escalations stay provisional until M4 runs the rules) · **Credits:** none · **Adapter:** no
 
 **Creates**
 - `src/obdient/schemas/scenario.py`, `src/obdient/schemas/nhtsa.py` (decision 2)
@@ -310,7 +310,7 @@ These are M0 leftovers and setup-checklist items. Each blocks the milestone name
 - `scenarios/held_out/h04_*.yaml`, demo video
 
 **Steps — part A, no adapter**
-1. `RecordingVehicle`, `ReplayVehicle`, `redact_session` per §4.7; `RecordingTransport`.
+1. `RecordingVehicle`, `ReplayVehicle`, `redact_session` per §4.7; `RecordingTransport`. The collector recognises the simulator with `isinstance` (M3); a `RecordingVehicle` wrapping a simulator must still get the simulator's conditions and fixed clock, so give the collector a hook for that first.
 2. `BleTransport` per §4.3 against a fake `bleak` client: discovery by name prefix, notify subscription, chunked writes, a private event-loop thread.
 3. Wire the CLI flags.
 

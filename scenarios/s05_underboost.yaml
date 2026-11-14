@@ -1,0 +1,26 @@
+id: s05_underboost
+title: Turbo underboost, P0299
+source:
+  - "NHTSA complaints ODI 11579405, 11546483, 11510454, 11438933, 11469525, 11661666 (2015-2018 GTI: seized wastegate actuator, low-boost codes, limp mode)"
+  # VW Tech Tip 21-10-02, P0299 / P0234 / P0236: wastegate lever seized, often intermittent.
+  # It covers the older 2.0 TSI (CCTA, CBFA), so it is analogous.
+  - https://static.nhtsa.gov/odi/tsbs/2015/MC-10122981-9999.pdf
+vehicle: {vin: WVWZZZ_FIXTURE, make: VOLKSWAGEN, model: Golf GTI, year: 2018, displacement_l: 2.0}
+nhtsa: {fixture: gti_2018}
+dtcs: {stored: [P0299], pending: [], permanent: [P0299]}
+freeze_frame: {trigger: P0299, rpm: 3400, load_pct: 92.2, throttle_pct: 87.8, map_kpa: 118, baro_kpa: 100, speed_kmh: 96, ect_c: 94}
+readiness: {catalyst: complete, evap: complete, o2_sensor: complete, o2_heater: complete}
+since_clear: {warmups: 51, distance_km: 1730}
+initial_condition: idle
+conditions:
+  idle: {rpm: 760, load_pct: 22.4, throttle_pct: 14.1, map_kpa: 34, baro_kpa: 100, speed_kmh: 0, ect_c: 91, ltft_b1: 1.6, stft_b1: 0.8}
+user_report: {symptoms_text: "Lost power merging, EPC light came on, fine again after a restart", flashing_mil: false, conditions: [load]}
+expected:
+  top_finding_any: [wastegate_fault, diverter_valve_fault, turbo_fault, boost_leak]
+  escalations: [prompt]  # provisional until M4: assumes OBDex flags P0299 as limp-mode capable
+  must_not: ["driving_test"]
+  notes: >-
+    The freeze frame is the evidence: near-full throttle and high load with manifold pressure
+    only about 18 kPa above barometric. A parked car cannot show boost, so a good report
+    explains the candidates and what a shop would check, and does not tell the owner to
+    drive the car hard to reproduce it.

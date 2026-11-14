@@ -1,0 +1,24 @@
+id: s06_catalyst
+title: Catalyst efficiency below threshold, P0420
+source:
+  - "OBDex P0420 (pinned commit 9ba1ffa; CARB, GM and Ford documents per the PRD). Not yet checked: data/obdex/ arrives in M4."
+vehicle: {vin: WVWZZZ_FIXTURE, make: VOLKSWAGEN, model: Golf GTI, year: 2018, displacement_l: 2.0}
+nhtsa: {fixture: gti_2018}
+dtcs: {stored: [P0420], pending: [], permanent: [P0420]}
+readiness: {catalyst: complete, evap: complete, o2_sensor: complete, o2_heater: complete}
+since_clear: {warmups: 60, distance_km: 2100}
+initial_condition: idle
+conditions:
+  # The GTI's front sensor is a wideband type (lambda), so the sign of a tired converter is
+  # the rear sensor swinging instead of sitting steady.
+  idle:      {rpm: 760,  speed_kmh: 0, ect_c: 92, ltft_b1: 0.8, stft_b1: -0.8, lambda_b1s1: 1.0,   o2_b1s2_v: [0.17, 0.74, 0.22]}
+  hold_2500: {rpm: 2500, speed_kmh: 0, ect_c: 93, ltft_b1: 0.8, stft_b1: 0.8,  lambda_b1s1: 0.998, o2_b1s2_v: [0.71, 0.15, 0.68]}
+user_report: {symptoms_text: "Check engine light is on, car drives normally", flashing_mil: false}
+expected:
+  top_finding_any: [catalyst_aged]
+  escalations: []  # provisional until M4: depends on OBDex's limp-mode flag for P0420
+  must_not: ["escalation:stop"]
+  notes: >-
+    A healthy converter holds the rear sensor steady; this one swings between about 0.15 V
+    and 0.75 V. A good report says an aged converter is most consistent, mentions the rear
+    sensor as the alternative, and creates no urgency. There is deliberately no freeze frame.

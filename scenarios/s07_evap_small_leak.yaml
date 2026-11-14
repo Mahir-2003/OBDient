@@ -1,0 +1,25 @@
+id: s07_evap_small_leak
+title: EVAP small leak or loose gas cap, P0456
+source:
+  - "OBDex P0456 (pinned commit 9ba1ffa, per the PRD). Not yet checked: data/obdex/ arrives in M4."
+vehicle: {vin: WVWZZZ_FIXTURE, make: VOLKSWAGEN, model: Golf GTI, year: 2018, displacement_l: 2.0}
+nhtsa: {fixture: gti_2018}
+dtcs: {stored: [P0456], pending: [], permanent: []}
+freeze_frame: {trigger: P0456, rpm: 1650, speed_kmh: 54, ect_c: 89, fuel_level_pct: 91.8}
+readiness: {catalyst: complete, evap: complete, o2_sensor: complete, o2_heater: complete}
+since_clear: {warmups: 70, distance_km: 3300}
+initial_condition: idle
+conditions:
+  idle: {rpm: 760, speed_kmh: 0, ect_c: 90, ltft_b1: 0.8, stft_b1: 0.0, fuel_level_pct: 85.1}
+user_report:
+  symptoms_text: "Light came on the day after I filled up"
+  flashing_mil: false
+  checklist: {fuel_smell: false}
+expected:
+  top_finding_any: [gas_cap, evap_leak]
+  escalations: []  # provisional until M4: depends on OBDex's limp-mode flag for P0456
+  must_not: ["escalation:stop", "escalation:prompt"]
+  notes: >-
+    A low-severity code that must stay low-severity. A good report starts with the gas cap.
+    Real GTI EVAP complaints are mostly liquid fuel leaking from the canister; that is a
+    fuel-smell case and not this scenario, where the user reports no smell.

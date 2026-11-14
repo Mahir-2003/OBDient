@@ -1,0 +1,28 @@
+id: s02_maf_lean_load
+title: Contaminated MAF sensor, lean under load
+source:
+  # Ford TSB 98-23-10, MAF contamination: negative long-term trim at idle, positive at higher
+  # airflow, with P0171. A manufacturer document, but for 1990s Fords, read through a mirror.
+  - https://www.v8sho.com/SHO/TSB982310MassAirFlowContamination.htm
+  # VW Tech Tip 21-20-01TT, P0101 on a 2.0L: pressure-test the charge-air system first.
+  - https://static.nhtsa.gov/odi/tsbs/2020/MC-10172567-0001.pdf
+# A 2013 (Mk6, engine CCTA) because the 2018 GTI has no MAF sensor. No NHTSA fixture.
+vehicle: {vin: WVWZZZ_FIXTURE_MK6, make: VOLKSWAGEN, model: GTI, year: 2013, engine: 2.0L TSI (CCTA), displacement_l: 2.0}
+dtcs: {stored: [P0171], pending: [P0101], permanent: []}
+freeze_frame: {trigger: P0171, rpm: 3100, load_pct: 78.0, speed_kmh: 105, ltft_b1: 16.4, stft_b1: 9.0, ect_c: 93}
+readiness: {catalyst: complete, evap: complete, o2_sensor: complete, o2_heater: complete}
+since_clear: {warmups: 38, distance_km: 1150}
+initial_condition: idle
+conditions:
+  idle:      {rpm: 760,  load_pct: 21.6, ltft_b1: -3.1, stft_b1: 1.6, maf_gs: 2.9, ect_c: 91, speed_kmh: 0}
+  hold_2500: {rpm: 2500, load_pct: 27.5, ltft_b1: 14.8, stft_b1: 8.6, maf_gs: 9.4, ect_c: 92, speed_kmh: 0}
+user_report: {symptoms_text: "Feels flat when I put my foot down on the motorway", flashing_mil: false, conditions: [load]}
+expected:
+  top_finding_any: [maf_fault]
+  escalations: []  # provisional until M4: depends on OBDex's limp-mode flags for P0171 / P0101
+  must_not: ["top_is:pcv_failure", "top_is:o2_sensor_fault"]
+  notes: >-
+    The mirror of s01: total trim is about -2 % at idle and about +23 % at 2,500 rpm. A leak
+    would do the opposite. A good report also suggests checking the intake and charge-air
+    hoses before buying a sensor (VW Tech Tip 21-20-01TT). A weak fuel pump gives similar
+    trims; the pending P0101 is what points at the MAF.

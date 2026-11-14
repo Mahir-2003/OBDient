@@ -1,0 +1,28 @@
+id: s08_recently_cleared
+title: Used car with codes recently cleared
+source:
+  # California BAR, On-Board Diagnostic Test Reference: for 2000 and newer gasoline vehicles
+  # only the evaporative monitor may be incomplete at a Smog Check.
+  - https://www.bar.ca.gov/industry/PDTC
+  # BAR newsletter, fall 2025: rules effective October 1, 2025 require all monitors that can
+  # feasibly be set; current pass/fail criteria stay in place during the phase-in.
+  - https://www.bar.ca.gov/arsc/newsletters/newsletter/fall-2025/new-obd-readiness-monitor-regulations-explained
+  - "OBDex PID 30 / 31 definitions (warm-ups and distance since codes cleared). Not yet checked: data/obdex/ arrives in M4."
+vehicle: {vin: WVWZZZ_FIXTURE, make: VOLKSWAGEN, model: Golf GTI, year: 2018, displacement_l: 2.0}
+nhtsa: {fixture: gti_2018}
+mil_on: false
+dtcs: {stored: [], pending: [], permanent: []}
+readiness: {catalyst: incomplete, evap: incomplete, o2_sensor: incomplete, o2_heater: complete}
+since_clear: {warmups: 3, distance_km: 12}
+initial_condition: idle
+conditions:
+  idle: {rpm: 760, speed_kmh: 0, ect_c: 88, ltft_b1: 0.0, stft_b1: 1.6}
+user_report: {symptoms_text: "Looking at buying this car; seller says it has no problems"}
+expected:
+  top_finding_any: [recently_cleared_codes]
+  escalations: []
+  must_not: ["any_diagnosis"]
+  notes: >-
+    No codes, but three monitors are incomplete after 3 warm-ups and 12 km. A good report
+    says the codes were probably cleared recently, that the scan cannot show what was there
+    before, and to scan again after the car has completed a drive cycle.

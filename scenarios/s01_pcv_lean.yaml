@@ -1,0 +1,26 @@
+id: s01_pcv_lean
+title: Crankcase air leak (PCV or breather), lean at idle
+source:
+  # VW Tech Tip 01-14-01TT, DTCs P0171 / P119A lean fuel trims. It covers the older 2.0L
+  # (CCTA, CBFA) and names the rear main seal and crankcase breather, so it is analogous.
+  - https://static.nhtsa.gov/odi/tsbs/2017/MC-10125599-9999.pdf
+vehicle: {vin: WVWZZZ_FIXTURE, make: VOLKSWAGEN, model: Golf GTI, year: 2018, displacement_l: 2.0}
+nhtsa: {fixture: gti_2018}
+dtcs: {stored: [P0171], pending: [], permanent: [P0171]}
+freeze_frame: {trigger: P0171, rpm: 780, ltft_b1: 19.5, stft_b1: 6.2, ect_c: 88}
+readiness: {catalyst: complete, evap: complete, o2_sensor: complete, o2_heater: complete, egr: unsupported}
+since_clear: {warmups: 45, distance_km: 820}
+initial_condition: idle
+conditions:
+  idle:      {rpm: 780,  ltft_b1: 19.5, stft_b1: 6.2,   maf_gs: 2.4,  ect_c: 90, speed_kmh: 0}
+  hold_2500: {rpm: 2500, ltft_b1: 19.5, stft_b1: -12.0, maf_gs: 11.0, ect_c: 91, speed_kmh: 0}
+user_report: {symptoms_text: "Slight whistle from the engine at idle", flashing_mil: false}
+answers: {ask_user: default_unknown, actions: confirm_all}
+expected:
+  top_finding_any: [unmetered_air_leak, pcv_failure, vacuum_leak]
+  escalations: []  # provisional until M4: depends on OBDex's limp-mode flag for P0171
+  must_not: ["top_is:o2_sensor_fault"]
+  notes: >-
+    A leak matters most at idle, where airflow is small: total trim is about +26 % at idle
+    and about +8 % at 2,500 rpm. A good report names an air leak through the crankcase
+    ventilation and does not put an oxygen sensor first.

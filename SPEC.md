@@ -54,6 +54,8 @@ Items that could not be fixed without data or hardware that does not exist yet a
 | X8 | Escalations "evaluated before the agent runs" | Evaluated before the loop and re-evaluated after every `ask_user` and `read_live_data`; escalations can only be added | A user answer or a new reading can reveal a STOP condition mid-run |
 | X9 | Recorder "writes every request and raw response" | Two files: a Vehicle-level session (replayable) and an optional transport-level raw log (parser fixtures) | The simulator has no raw bytes; replay must work for every `Vehicle` |
 | X10 | Hard constraint "dollar budgets are enforced"; `MAX_USD` per run and per day; `OBDIENT_MAX_USD` in `.env.example` | No dollar limits anywhere. Cost is computed and logged per LLM call and per run (trace only). The PRD's "≤ $0.25 per run" criterion is read from eval summaries. The OpenAI dashboard hard limit is the only spend guard. | Decision after spec review: simpler loop, no projection logic |
+| X11 | "Must not request a driving test" (scenario 5), with no scope given | The `driving_test` check reads `suggested_checks` and `next_steps` only, not `questions_for_mechanic` | Those two fields tell the owner what to do; a question for the mechanic may properly ask for a road test |
+| X12 | Scenario 2 (dirty MAF) on the 2018 GTI | `s02` uses a 2013 GTI (Mk6, engine CCTA) with no NHTSA fixture | The 2018 GTI's engine has no MAF sensor, so the fault cannot occur on it (V11) |
 
 ### 0.4 Conventions
 
@@ -880,9 +882,9 @@ Behaviour:
 
 - `connect()` returns `AdapterInfo(id_string="OBDient ScenarioSimulator", protocol_number="6", voltage=scenario.adapter_voltage, …None)`.
 - `supported_pids()`: union of PIDs named in any condition and in `freeze_frame`, plus `0101` and the since-clear PIDs whose scenario value is not null.
-- `read_pids(pids, condition)`: values from `scenario.conditions[self.condition]`; the `condition` argument is ignored and readings carry `self.condition`. A supported PID missing from the current condition → `ReadError(NO_DATA)`. A list-valued PID returns its elements in order across successive reads and wraps around.
-- Noise: if `scenario.noise` is set, each numeric value is multiplied by `1 + U(−pct, +pct)/100` from `random.Random(seed if seed is not None else noise.seed)`, then rounded to the PID's `decimals`. No noise by default.
-- `raw` on simulator readings is `""`; `ecu` is `"7E8"`; `ts` is `captured_at + n·0.5 s` with a deterministic counter (no wall clock), so snapshots are byte-identical across runs.
+- `read_pids(pids, condition)`: values from `scenario.conditions[self.condition]`; the `condition` argument is ignored and readings carry `self.condition`. A since-clear PID is answered from `scenario.since_clear`. Any other supported PID missing from the current condition → `ReadError(NO_DATA)`. A list-valued PID returns its elements in order across successive reads and wraps around.
+- Noise: if `scenario.noise` is set, each numeric value is multiplied by `1 + U(−pct, +pct)/100` from `random.Random(seed if seed is not None else noise.seed)`, No noise by default. With or without noise, every value is rounded to the PID's `decimals`, as the ELM327 decoder does.
+- `raw` on simulator readings is `""`; `ecu` is `"7E8"`; `ts` is `captured_at + n·0.5 s` with a deterministic counter (no wall clock), so snapshots are byte-identical across runs apart from `snapshot_id`. The simulator's `captured_at` is the constant `SIMULATED_EPOCH` (2026-01-01T00:00:00Z), which the collector uses as the Snapshot's `captured_at`; `n` counts `read_pids` calls.
 - `read_dtcs()`, `status()`, `freeze_frame()`, `since_clear()`, `vin()` map the scenario fields directly. `mil_on` defaults to `len(stored) > 0`; `dtc_count = len(stored)`.
 
 ### 4.7 Recorder and ReplayVehicle (`vehicle/replay.py`)
@@ -917,6 +919,8 @@ Session file (JSONL), one object per line:
 class ConditionPrompter(Protocol):
     def prepare(self, condition: Condition) -> bool: ...
         # Ask the user to put the car in this condition. False = skipped.
+    def release(self, condition: Condition) -> None: ...
+        # Sampling of a prepared condition is over; called even if reading failed.
 
 def collect(
     vehicle: Vehicle,
@@ -951,7 +955,7 @@ Rules:
   | `cold_start` | coolant > 50 °C |
 
   A missing rpm or coolant reading does not contradict.
-- `Snapshot.conditions_captured` lists the labels after the sanity check, in order. `mil_on`, `dtc_count`, `readiness` come from `status()`; all `None`/`[]` when it failed.
+- `Snapshot.conditions_captured` lists the labels after the sanity check, each once, ordered by when the label was last captured, so the last entry is always the phase captured last. `mil_on`, `dtc_count`, `readiness` come from `status()`; all `None`/`[]` when it failed.
 - Default supported PIDs that are in `live_pids` but unsupported do not create read errors (they are filtered before the call). Prefetch turns the absence of `0105`, `0106`, `0107`, `010C` into `evidence_gap(pid_unsupported)` items.
 
 ---
@@ -1771,7 +1775,8 @@ class CliIO:            # prints "OBDient asks: <question>", reads one line from
 class NonInteractiveIO: # always returns "unknown"
 class ScenarioIO:       # answers from scenario.answers (§11)
 
-def run_intake(prompt: Callable[[str], str], mil_on: bool | None) -> UserReport: ...
+def run_intake(prompt: Callable[[str], str], mil_on: bool | None,
+               symptoms: str | None = None) -> UserReport: ...   # symptoms given -> question 1 is skipped
 class CliConditionPrompter: ...   # implements ConditionPrompter with the texts of §4.8
 ```
 
@@ -1848,7 +1853,7 @@ class Database:                          # also implements NhtsaCache
     def close(self) -> None: ...
     def save_snapshot(self, s: Snapshot) -> None: ...        # INSERT only; an existing id raises
     def get_snapshot(self, snapshot_id: str) -> Snapshot: ...# NotFoundError; accepts a unique prefix >= 6 chars
-    def latest_snapshot(self, vin: str | None = None) -> Snapshot | None: ...
+    def latest_snapshot(self, vin: str | None = None) -> Snapshot | None: ...   # last one stored, not latest captured_at
     def save_profile(self, p: VehicleProfile) -> None: ...   # upsert by vin; skipped when vin is None
     def save_report(self, r: Report, md_path: Path | None, html_path: Path | None) -> None: ...
     def get_report(self, report_id: str) -> Report: ...      # prefix lookup as above
@@ -1952,11 +1957,11 @@ def resolve_scenario(ref: str, scenarios_dir: Path) -> Scenario: ...   # a path,
 
 Validation rules (each raises `ScenarioError("<file>: <field>: <problem>")`):
 
-- PID keys in `freeze_frame` and `conditions` are friendly names from §4.5 or raw `01XX` identifiers that are in `PID_TABLE`. Unknown key → error listing valid names.
+- PID keys in `freeze_frame` and `conditions` are friendly names from §4.5 or the raw `01XX` identifiers of those same PIDs (PIDs with a decoder). Raw identifiers must be quoted: YAML reads an unquoted `0105` as an integer. Unknown key → error listing valid names. Values must be numbers; booleans and numeric strings are rejected. Since-clear PIDs are set under `since_clear`, not in `conditions`.
 - `freeze_frame.trigger` is required when `freeze_frame` is given and must be in `dtcs.stored` or `dtcs.pending`.
 - All DTC strings match the code regex. A code in `permanent` need not be in `stored`.
 - `readiness`: monitors not listed are `unsupported`, except the three continuous monitors, which default to `complete`.
-- `conditions` keys may not include `unknown`.
+- `conditions` keys may not include `unknown`, and may not include both `cold_start` and `warm` (§4.8).
 - `nhtsa`: `fixture` and inline lists are mutually exclusive. Neither → the run sees zero recalls and zero complaints with the candidate names as names tried. Scenario runs never touch the network.
 - `expected.top_finding_any` values are `FindingCategory` values; a typo is a load error, not a silent grader miss.
 
@@ -1968,7 +1973,7 @@ Validation rules (each raises `ScenarioError("<file>: <field>: <problem>")`):
 | `has_category:<category>` | any finding has that category |
 | `likelihood_high:<category>` | any finding with that category has likelihood `high` |
 | `any_diagnosis` | any finding whose category is not `insufficient_evidence`, `recently_cleared_codes` or `other` |
-| `driving_test` | regex `\b(test[- ]drive|road test|drive (it|the car)|on the highway|under load|full throttle|accelerat\w+ hard)\b` matches any `suggested_checks`, `next_steps` or `questions_for_mechanic` string |
+| `driving_test` | regex `\b(test[- ]drive|road test|drive (it|the car)|on the highway|under load|full throttle|accelerat\w+ hard)\b` matches any `suggested_checks` or `next_steps` string. `questions_for_mechanic` is not checked: asking a mechanic to road-test the car is fine (X11) |
 | `escalation:<level>` | an escalation of that level is present (for "must not over-escalate") |
 
 The PRD's example labels map as: `replace_o2_sensor_as_top` → `top_is:o2_sensor_fault`; `safe_to_drive` → not needed (the verifier grader already covers banned phrases).
@@ -1977,7 +1982,7 @@ Canonical example (the PRD's `s01`, in this schema):
 
 ```yaml
 id: s01_pcv_lean
-title: Torn PCV diaphragm (EA888), lean at idle
+title: Crankcase air leak (PCV or breather), lean at idle
 source:
   - https://static.nhtsa.gov/odi/tsbs/2017/MC-10125599-9999.pdf
 vehicle: {vin: WVWZZZ_FIXTURE, make: VOLKSWAGEN, model: Golf GTI, year: 2018, displacement_l: 2.0}
@@ -2100,7 +2105,7 @@ Captures a Snapshot and stores it. Prints the snapshot ID and a summary (VIN mas
 | `--no-input` | off | Skip intake and condition prompts (empty user report; with `--scenario`, the scenario's user report is always used and no questions are asked) |
 | `--json` | off | Print the Snapshot JSON to stdout instead of the summary |
 
-Errors: `--scenario` with a non-simulator source, or a source without its required option → exit 2 with `--source <x> requires <flag>.` Connection failure → exit 3 with the `VehicleConnectionError` message.
+Errors: a source without its required option → exit 2 with `--source <x> requires <flag>.`; `--scenario` with a non-simulator source → exit 2 with `--scenario requires --source simulator, not <x>.`; a malformed `--vin` → exit 2. `--symptoms` is cut to 2,000 characters. For a real vehicle the intake questions are asked after the read (so the flashing-light question knows whether the MIL is on); if they are cut short the scan is still stored, with an empty user report. Connection failure → exit 3 with the `VehicleConnectionError` message.
 
 ### 13.2 `obdient diagnose`
 
@@ -2221,8 +2226,9 @@ Nothing in v0.1 may make these harder: no v0.1 code may assume a single conditio
 | V8 | Escalation thresholds (115 °C, 12.0 V) and derived-metric thresholds | M4, then evals | §6.2, §5.6 |
 | V9 | Whether OBDex limp-mode flags make `P1_limp_mode_code` fire on MVP scenarios that the PRD expects to be calm (s01, s06, s07) | M4 | §11 expected escalations; if it over-fires, narrow P1 and record the change here |
 | V10 | BLE service/characteristic UUIDs and write chunk size for the CX; PIDs the GTI supports | M8 | §4.3, `DEFAULT_LIVE_PIDS` |
-| V11 | Real-world sources for scenarios 2, 3, 5; the VW warranty bulletin for scenario 4 | before M3 | scenario `source` fields |
+| V11 | Real-world sources for scenarios 2, 3, 5; the VW warranty bulletin for scenario 4. *M3: resolved; sources are in each scenario's `source` field. The bulletin is VWP-22-06 (water pump, thermostat, housing; 8 years / 80,000 miles; certain 2014-2021 vehicles including GTI, eligibility per VIN). No VW source was found for a dirty MAF, and no source pairs P0128 with a coolant leak (s04).* | before M3 | scenario `source` fields |
 | V15 | Mode 03 / 07 / 0A framing: SPEC says `<SID> <count> <pairs>`; ELM327-emulator 4.0.0 sends `<SID> <pairs>`. `decode_dtcs` accepts both by length parity. Confirm on the GTI and drop the no-count branch if the car matches SPEC. | M8 | §4.5 |
 | V12 | `P2_misfire` covers P0301–P0306 only (as in the PRD); cars with more cylinders need P0307–P0312 | later | §6.2 |
 | V13 | Whether reasoning tokens count against `max_output_tokens` for the chosen models; adjust the 6000 default if they do | M5 | §2 |
 | V14 | Strict structured-output schema rules (all fields required, no defaults, supported keywords, `$ref` handling) | M5 | §7.1 `strict_schema`, §7.5, §7.7 |
+| V16 | Whether the 2018 GTI answers PID `0110` (`maf_gs`): its engine has no MAF sensor, so any value is computed by the ECU. `s01` uses `maf_gs` on that car. If the car does not report it, drop `maf_gs` from `s01` and treat `maf_vs_expected` as unavailable there. | M8 | §11 `s01`, §5.6 `maf_vs_expected` |
