@@ -70,7 +70,7 @@ These are M0 leftovers and setup-checklist items. Each blocks the milestone name
 
 ## M1 — Repo skeleton
 
-**Status:** done, except `.env.example`: the deny rule `Read(./.env.*)` blocks Claude from creating it, so Mahir adds it by hand (`OPENAI_API_KEY=`, `OBDIENT_HOME=`) · **Credits:** none · **Adapter:** no
+**Status:** done · **Credits:** none · **Adapter:** no
 
 **Creates**
 - `pyproject.toml`, `uv.lock`, `.python-version`, `.gitignore`, `.env.example`, `CLAUDE.md`
