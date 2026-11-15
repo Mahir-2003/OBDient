@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from obdient.errors import ScenarioError
+from obdient.knowledge.obdex import ObdexIndex
 from obdient.schemas.common import Condition, SnapshotSource
 from obdient.schemas.report import FindingCategory
 from obdient.schemas.scenario import (
@@ -20,7 +21,7 @@ from obdient.schemas.snapshot import DtcStatus, UserReport, WarningLight
 from obdient.vehicle.collector import collect
 from obdient.vehicle.pids import DEFAULT_LIVE_PIDS
 from obdient.vehicle.simulator import ScenarioSimulator
-from support import SCENARIOS_DIR, make_scenario, scenario_dict
+from support import SCENARIOS_DIR, Prefetched, make_scenario, scenario_dict
 
 MVP = load_scenarios(SCENARIOS_DIR)
 
@@ -410,3 +411,63 @@ def test_user_report_carries_the_other_fields() -> None:
         98000,
     )
     assert report.conditions == ["cold"] and report.checklist.fuel_smell is False
+
+
+# ---- escalations: the rules, run offline, must give the expected set ---------
+
+
+@pytest.mark.parametrize("scenario", MVP, ids=lambda s: s.id)
+def test_rule_computed_escalations_equal_expected(scenario: Scenario, obdex: ObdexIndex) -> None:
+    """The PRD's "escalations fire 100 %" criterion, without a model (SPEC §11)."""
+    escalations = Prefetched(scenario, obdex).escalations()
+    levels = {e.level.value for e in escalations} - {"recall"}  # RECALL is never graded
+    assert levels == set(scenario.expected.escalations), [e.rule_id for e in escalations]
+
+
+def test_which_rules_fire_on_which_scenario(obdex: ObdexIndex) -> None:
+    fired = {
+        s.id[:3]: [
+            e.rule_id for e in Prefetched(s, obdex).escalations() if e.level.value != "recall"
+        ]
+        for s in MVP
+    }
+    assert fired == {
+        "s01": [],
+        "s02": [],
+        "s03": ["P2_misfire"],
+        "s04": [],
+        "s05": [],
+        "s06": [],
+        "s07": [],
+        "s08": [],
+        "s09": [],
+        "s10": ["S1_coolant_overtemp", "S2_p0217"],
+    }
+
+
+def test_limp_mode_is_a_label_on_these_scenario_codes(obdex: ObdexIndex) -> None:
+    """X13: the flag shows up next to the code; it changes no expected escalation."""
+    from obdient.agent.safety import LIMP_MODE_LABEL, definition_labels
+
+    labelled = {
+        code
+        for scenario in MVP
+        for code in {*scenario.dtcs.stored, *scenario.dtcs.pending, *scenario.dtcs.permanent}
+        if definition_labels(obdex.lookup_dtc(code)) == [LIMP_MODE_LABEL]
+    }
+    assert labelled == {"P0101", "P0217", "P0299", "P0300", "P0302"}
+
+
+def test_no_scenario_user_text_trips_a_keyword_by_accident() -> None:
+    from obdient.agent.safety import match_user_text, user_texts
+
+    assert {s.id: match_user_text(user_texts(s.build_user_report())) for s in MVP} == {
+        s.id: {} for s in MVP
+    }
+
+
+def test_fixture_scenarios_see_three_recalls_and_s02_sees_none(obdex: ObdexIndex) -> None:
+    for scenario in MVP:
+        result = Prefetched(scenario, obdex).nhtsa
+        assert len(result.recalls) == (3 if scenario.nhtsa.fixture else 0), scenario.id
+        assert result.errors == []

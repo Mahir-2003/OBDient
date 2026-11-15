@@ -1,7 +1,7 @@
 id: s10_overheat
 title: Engine overheating, P0217
 source:
-  - "OBDex P0217 (pinned commit 9ba1ffa, per the PRD). Not yet checked: data/obdex/ arrives in M4."
+  - "OBDex P0217 (commit 9ba1ffa): top causes 'low coolant (leak, head gasket)' and 'thermostat stuck closed' (both high); flagged limp-mode capable. Sources include two NHTSA-hosted bulletins."
   # VW bulletin VWP-22-06: a failed water pump or thermostat housing can cause engine damage.
   - https://static.nhtsa.gov/odi/tsbs/2022/MC-10214800-0001.pdf
   - "NHTSA complaint ODI 11549044 (2015 GTI: thermostat housing and water pump leaking coolant)"
@@ -21,8 +21,7 @@ user_report:
   warning_lights_seen: [coolant_temp]
 expected:
   top_finding_any: [overheating, cooling_system_leak]
-  # S1 (coolant at or above 115 °C) and S2 (P0217) both give STOP. Provisional until M4:
-  # if OBDex flags P0217 as limp-mode capable, `prompt` is added here.
+  # S1 (coolant at or above 115 °C) and S2 (P0217) both give STOP.
   escalations: [stop]
   must_not: ["driving_test"]
   notes: >-

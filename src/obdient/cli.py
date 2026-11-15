@@ -6,11 +6,19 @@ from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Annotated, NoReturn
 
+import httpx
 import typer
 
 from obdient import __version__
+from obdient.agent.safety import RECALLS_NOTE, VIN_LOOKUP_URL
 from obdient.config import load_settings
-from obdient.errors import ObdientError, UnsupportedProtocolError, VehicleConnectionError
+from obdient.errors import (
+    NhtsaUnavailable,
+    ObdientError,
+    UnsupportedProtocolError,
+    VehicleConnectionError,
+)
+from obdient.knowledge.nhtsa import NhtsaClient, NhtsaResolver, NhtsaResult, VinDecode
 from obdient.schemas.common import Condition, SnapshotSource
 from obdient.schemas.scenario import resolve_scenario
 from obdient.schemas.snapshot import DtcStatus, Snapshot, UserReport
@@ -242,3 +250,123 @@ def scan(
         raise typer.Exit(ExitCode.ERROR) from exc
 
     typer.echo(snapshot.model_dump_json(indent=2) if as_json else _summary(snapshot))
+
+
+# ---- nhtsa (SPEC §13.5) ------------------------------------------------------
+
+
+def _print_nhtsa(result: NhtsaResult, decoded: VinDecode | None, complaints: int) -> None:
+    names = result.candidate_names
+    tried = ", ".join(names)
+    if decoded is not None:
+        vehicle = " ".join(
+            str(part) for part in (decoded.model_year, decoded.make, decoded.model) if part
+        )
+        engine = f" ({decoded.engine})" if decoded.engine else ""
+        typer.echo(f"Vehicle: {vehicle or 'not identified'}{engine}")
+    typer.echo(f"Names tried: {tried}")
+    for name in names:
+        recalls_n = sum(1 for r in result.recalls if name in r.matched_names)
+        complaints_n = sum(1 for c in result.complaints if name in c.matched_names)
+        typer.echo(f"  {name}: {recalls_n} recalls, {complaints_n} complaints")
+    typer.echo("")
+    if result.recalls:
+        typer.echo(f"Recalls: {len(result.recalls)}")
+        for recall in result.recalls:
+            typer.echo(
+                f"  {recall.campaign_number}  {recall.report_date or 'date unknown'}  "
+                f"{recall.component}  [found under: {', '.join(recall.matched_names)}]"
+            )
+    elif result.failed("recalls") >= len(names):
+        typer.echo("Recalls: lookup failed; nothing is known either way.")
+    else:
+        typer.echo(f"Recalls: none found under names: {tried}. This is not proof that none exist.")
+    typer.echo(RECALLS_NOTE)
+    typer.echo(VIN_LOOKUP_URL)
+    typer.echo("")
+    if result.complaints:
+        typer.echo(f"Owner complaints (unverified): {len(result.complaints)}")
+        for complaint in result.complaints[:complaints]:
+            typer.echo(
+                f"  {complaint.odi_number}  {complaint.date_filed or 'date unknown'}  "
+                f"{', '.join(complaint.components)}"
+            )
+            typer.echo(f"    {complaint.summary[:300]}")
+    elif result.failed("complaints") >= len(names):
+        typer.echo("Owner complaints: lookup failed; nothing is known either way.")
+    else:
+        typer.echo(f"Owner complaints: none found under names: {tried}.")
+    for error in result.errors:
+        typer.echo(f"Lookup failed: {error}", err=True)
+
+
+@app.command()
+def nhtsa(
+    ctx: typer.Context,
+    vin: Annotated[
+        str | None, typer.Option("--vin", help="Decode with vPIC, then resolve.")
+    ] = None,
+    make: Annotated[str | None, typer.Option("--make", help="With --model and --year.")] = None,
+    model: Annotated[str | None, typer.Option("--model")] = None,
+    year: Annotated[int | None, typer.Option("--year")] = None,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="Ignore cache ages for this call.")
+    ] = False,
+    offline: Annotated[bool, typer.Option("--offline", help="Cache only.")] = False,
+    complaints: Annotated[
+        int, typer.Option("--complaints", min=0, help="Print the newest N complaint summaries.")
+    ] = 0,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the result as JSON.")] = False,
+) -> None:
+    """Show what NHTSA returns for a vehicle, and under which model names. No model calls."""
+    state: AppState = ctx.obj
+    given = (make is not None, model is not None, year is not None)
+    if vin is None and not all(given):
+        _usage_error("Give --vin, or --make, --model and --year together.")
+    if vin is not None and any(given):
+        _usage_error("Give either --vin or --make/--model/--year, not both.")
+    if refresh and offline:
+        _usage_error("--refresh and --offline cannot be combined.")
+    if vin is not None:
+        try:
+            vin = normalize_vin(vin)
+        except ValueError as exc:
+            _usage_error(str(exc))
+
+    settings = load_settings(home=state.home)
+    database = Database(settings.db_path)
+    http = None if offline else httpx.Client()
+    try:
+        client = NhtsaClient(
+            database,
+            http,
+            delay_s=settings.nhtsa_delay_s,
+            timeout_s=settings.nhtsa_timeout_s,
+            offline=offline,
+            refresh=refresh,
+        )
+        decoded: VinDecode | None = None
+        if vin is not None:
+            decoded = client.decode_vin(vin)
+            make, model, year = decoded.make, decoded.model, decoded.model_year
+            if make is None or model is None or year is None:
+                typer.echo(
+                    "vPIC could not identify the make, model and year from that VIN.", err=True
+                )
+                raise typer.Exit(ExitCode.ERROR)
+        assert make is not None and model is not None and year is not None
+        result = NhtsaResolver(client, settings.nhtsa_products_enabled).resolve(make, model, year)
+    except NhtsaUnavailable as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(ExitCode.ERROR) from exc
+    finally:
+        database.close()
+        if http is not None:
+            http.close()
+
+    if as_json:
+        typer.echo(result.model_dump_json(indent=2))
+    else:
+        _print_nhtsa(result, decoded, complaints)
+    if result.errors and not result.recalls and not result.complaints:
+        raise typer.Exit(ExitCode.ERROR)

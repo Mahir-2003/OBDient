@@ -1,7 +1,7 @@
 id: s07_evap_small_leak
 title: EVAP small leak or loose gas cap, P0456
 source:
-  - "OBDex P0456 (pinned commit 9ba1ffa, per the PRD). Not yet checked: data/obdex/ arrives in M4."
+  - "OBDex P0456 (commit 9ba1ffa): top cause 'fuel cap seal worn or cap not clicked in' (high); also lists the VW/Audi leak detection pump. Sources include two NHTSA-hosted bulletins and a Ford OBD summary."
 vehicle: {vin: WVWZZZ_FIXTURE, make: VOLKSWAGEN, model: Golf GTI, year: 2018, displacement_l: 2.0}
 nhtsa: {fixture: gti_2018}
 dtcs: {stored: [P0456], pending: [], permanent: []}
@@ -17,7 +17,7 @@ user_report:
   checklist: {fuel_smell: false}
 expected:
   top_finding_any: [gas_cap, evap_leak]
-  escalations: []  # provisional until M4: depends on OBDex's limp-mode flag for P0456
+  escalations: []
   must_not: ["escalation:stop", "escalation:prompt"]
   notes: >-
     A low-severity code that must stay low-severity. A good report starts with the gas cap.

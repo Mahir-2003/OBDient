@@ -1,7 +1,7 @@
 id: s06_catalyst
 title: Catalyst efficiency below threshold, P0420
 source:
-  - "OBDex P0420 (pinned commit 9ba1ffa; CARB, GM and Ford documents per the PRD). Not yet checked: data/obdex/ arrives in M4."
+  - "OBDex P0420 (commit 9ba1ffa): top cause 'catalyst aged or poisoned' (high), then a sluggish rear oxygen sensor (medium). Its sources are the CARB regulation and GM and Ford OBD summaries; no service bulletin."
 vehicle: {vin: WVWZZZ_FIXTURE, make: VOLKSWAGEN, model: Golf GTI, year: 2018, displacement_l: 2.0}
 nhtsa: {fixture: gti_2018}
 dtcs: {stored: [P0420], pending: [], permanent: [P0420]}
@@ -16,7 +16,7 @@ conditions:
 user_report: {symptoms_text: "Check engine light is on, car drives normally", flashing_mil: false}
 expected:
   top_finding_any: [catalyst_aged]
-  escalations: []  # provisional until M4: depends on OBDex's limp-mode flag for P0420
+  escalations: []
   must_not: ["escalation:stop"]
   notes: >-
     A healthy converter holds the rear sensor steady; this one swings between about 0.15 V

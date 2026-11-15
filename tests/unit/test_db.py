@@ -248,11 +248,11 @@ def test_reports_start_empty(db: Database) -> None:
 
 
 def test_cache_put_get_and_overwrite(db: Database) -> None:
-    assert db.get("recalls|MAKE=VW", None) is None
-    db.put("recalls|MAKE=VW", {"results": [1, 2]})
-    assert db.get("recalls|MAKE=VW", None) == {"results": [1, 2]}
-    db.put("recalls|MAKE=VW", ["replaced"])
-    assert db.get("recalls|MAKE=VW", timedelta(hours=24)) == ["replaced"]
+    assert db.get("recalls|make=VW", None) is None
+    db.put("recalls|make=VW", {"results": [1, 2]})
+    assert db.get("recalls|make=VW", None) == {"results": [1, 2]}
+    db.put("recalls|make=VW", ["replaced"])
+    assert db.get("recalls|make=VW", timedelta(hours=24)) == ["replaced"]
 
 
 def test_cache_expiry_and_stale_read(db: Database, clock: Clock) -> None:

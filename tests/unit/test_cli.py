@@ -1,15 +1,18 @@
 import socket
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner, Result
 
 from obdient import __version__
+from obdient.agent.safety import RECALLS_NOTE
 from obdient.cli import app, mask_vin
+from obdient.knowledge.nhtsa import FixtureCache, NhtsaResult
 from obdient.schemas.common import Condition
 from obdient.schemas.snapshot import Snapshot, WarningLight
 from obdient.storage.db import Database
-from support import SCENARIOS_DIR
+from support import GTI_FIXTURE, SCENARIOS_DIR
 
 runner = CliRunner()
 
@@ -173,3 +176,132 @@ def test_mask_vin() -> None:
     assert mask_vin("WVWZZZAUZJW123456") == "WVW**********3456"
     assert mask_vin(None) == "not read"
     assert mask_vin("SHORT") == "*****"
+
+
+# ---- nhtsa (SPEC §13.5) ------------------------------------------------------
+
+
+def nhtsa(tmp_path: Path, *args: str) -> Result:
+    return runner.invoke(app, ["--home", str(tmp_path / "home"), "nhtsa", *args])
+
+
+def seed_cache(tmp_path: Path) -> None:
+    """Put the GTI fixture responses into the database cache, as a live run would."""
+    fixtures = FixtureCache(GTI_FIXTURE)
+    database = Database(tmp_path / "home" / "obdient.db")
+    for endpoint in ("recalls", "complaints"):
+        for model in ("GOLF GTI", "GTI"):
+            key = f"{endpoint}|make=VOLKSWAGEN|model={model}|modelYear=2018"
+            database.put(key, fixtures.get(key, None))
+    database.put("vpic_decode|vin=WVWZZZAUZJW000000", fixtures.get("vpic_decode|vin=X", None))
+    database.close()
+
+
+GTI_ARGS = ["--make", "VOLKSWAGEN", "--model", "Golf GTI", "--year", "2018", "--offline"]
+
+
+def test_nhtsa_shows_names_tried_and_where_each_recall_was_found(tmp_path: Path) -> None:
+    seed_cache(tmp_path)
+    result = nhtsa(tmp_path, *GTI_ARGS)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert "Names tried: Golf GTI, GTI" in lines
+    assert "  Golf GTI: 0 recalls, 33 complaints" in lines  # the name vPIC gives finds none
+    assert "  GTI: 3 recalls, 17 complaints" in lines
+    assert "Recalls: 3" in lines
+    assert "  24V110000  2024-02-14  FUEL SYSTEM, GASOLINE  [found under: GTI]" in lines
+    assert RECALLS_NOTE in lines and "https://www.nhtsa.gov/recalls" in lines
+    assert "Owner complaints (unverified): 50" in lines
+    assert not any(line.startswith("    ") for line in lines)  # no complaint text by default
+
+
+def test_nhtsa_complaints_flag_prints_the_newest(tmp_path: Path) -> None:
+    seed_cache(tmp_path)
+    result = nhtsa(tmp_path, *GTI_ARGS, "--complaints", "2")
+    lines = result.stdout.splitlines()
+    start = lines.index("Owner complaints (unverified): 50")
+    assert len(lines[start + 1 :]) == 4  # two complaints, two lines each
+    assert "2026-09-15" in lines[start + 1]
+
+
+def test_nhtsa_offline_uses_cached_answers_older_than_a_day(tmp_path: Path) -> None:
+    then = datetime(2026, 11, 1, tzinfo=UTC)
+    database = Database(tmp_path / "home" / "obdient.db", clock=lambda: then)
+    fixtures = FixtureCache(GTI_FIXTURE)
+    for endpoint in ("recalls", "complaints"):
+        for model in ("GOLF GTI", "GTI"):
+            key = f"{endpoint}|make=VOLKSWAGEN|model={model}|modelYear=2018"
+            database.put(key, fixtures.get(key, None))
+    database.close()
+
+    result = nhtsa(tmp_path, *GTI_ARGS)  # run "now", well over 24 hours later, offline
+    assert result.exit_code == 0, result.output
+    assert "Recalls: 3" in result.stdout.splitlines()
+
+
+def test_nhtsa_vw_is_an_alias_for_the_family_prefix_rule(tmp_path: Path) -> None:
+    result = nhtsa(tmp_path, "--make", "VW", "--model", "Golf GTI", "--year", "2018", "--offline")
+    assert "Names tried: Golf GTI, GTI" in result.stdout.splitlines()
+
+
+def test_nhtsa_json(tmp_path: Path) -> None:
+    seed_cache(tmp_path)
+    result = nhtsa(tmp_path, *GTI_ARGS, "--json")
+    parsed = NhtsaResult.model_validate_json(result.stdout)
+    assert len(parsed.recalls) == 3 and parsed.candidate_names == ["Golf GTI", "GTI"]
+
+
+def test_nhtsa_by_vin_decodes_first_and_never_prints_the_vin(tmp_path: Path) -> None:
+    seed_cache(tmp_path)
+    result = nhtsa(tmp_path, "--vin", "wvwzzzauzjw000000", "--offline")
+    assert result.exit_code == 0, result.output
+    assert "Vehicle: 2018 VOLKSWAGEN Golf GTI (2.0L 4-cyl Gasoline)" in result.stdout.splitlines()
+    assert "Recalls: 3" in result.stdout.splitlines()
+    assert "WVWZZZAUZJW000000" not in result.output
+
+
+def test_nhtsa_zero_results_never_says_no_recalls(tmp_path: Path) -> None:
+    database = Database(tmp_path / "home" / "obdient.db")
+    for endpoint in ("recalls", "complaints"):
+        database.put(f"{endpoint}|make=VOLKSWAGEN|model=GOLF|modelYear=2018", {"results": []})
+    database.close()
+    result = nhtsa(
+        tmp_path, "--make", "VOLKSWAGEN", "--model", "Golf", "--year", "2018", "--offline"
+    )
+    assert result.exit_code == 0, result.output
+    assert (
+        "Recalls: none found under names: Golf. This is not proof that none exist."
+        in result.stdout.splitlines()
+    )
+    assert "Owner complaints: none found under names: Golf." in result.stdout.splitlines()
+    assert "no recalls" not in result.output.lower()
+
+
+def test_nhtsa_offline_with_an_empty_cache_exits_1_and_claims_nothing(tmp_path: Path) -> None:
+    result = nhtsa(tmp_path, *GTI_ARGS)
+    assert result.exit_code == 1
+    assert "Recalls: lookup failed; nothing is known either way." in result.stdout
+    assert "none found" not in result.output
+    assert "Lookup failed: recalls for 'Golf GTI': offline and not cached" in result.stderr
+
+    by_vin = nhtsa(tmp_path, "--vin", "WVWZZZAUZJW000000", "--offline")
+    assert by_vin.exit_code == 1 and "offline and not cached" in by_vin.stderr
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        ([], "Give --vin, or --make, --model and --year together."),
+        (["--make", "VOLKSWAGEN", "--model", "GTI"], "Give --vin, or --make, --model and --year"),
+        (
+            ["--vin", "WVWZZZAUZJW000000", "--make", "VOLKSWAGEN"],
+            "Give either --vin or --make/--model/--year, not both.",
+        ),
+        ([*GTI_ARGS, "--refresh"], "--refresh and --offline cannot be combined."),
+        (["--vin", "SHORT"], "A VIN is 17 characters"),
+    ],
+)
+def test_nhtsa_usage_errors_exit_2(tmp_path: Path, args: list[str], message: str) -> None:
+    result = nhtsa(tmp_path, *args)
+    assert result.exit_code == 2 and message in result.stderr

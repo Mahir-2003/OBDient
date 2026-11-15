@@ -18,7 +18,7 @@ user_report: {symptoms_text: "Slight whistle from the engine at idle", flashing_
 answers: {ask_user: default_unknown, actions: confirm_all}
 expected:
   top_finding_any: [unmetered_air_leak, pcv_failure, vacuum_leak]
-  escalations: []  # provisional until M4: depends on OBDex's limp-mode flag for P0171
+  escalations: []
   must_not: ["top_is:o2_sensor_fault"]
   notes: >-
     A leak matters most at idle, where airflow is small: total trim is about +26 % at idle

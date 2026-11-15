@@ -17,7 +17,7 @@ conditions:
 user_report: {symptoms_text: "Shudders when I pull away, check engine light is on steady", flashing_mil: false}
 expected:
   top_finding_any: [ignition_coil_or_plug]
-  escalations: [prompt]  # P2_misfire (P0300 present). Provisional until M4 runs the rules.
+  escalations: [prompt]  # P2_misfire (P0300 present)
   must_not: ["top_is:o2_sensor_fault", "driving_test"]
   notes: >-
     A good report suggests swapping the cylinder 2 coil with another cylinder's and

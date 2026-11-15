@@ -7,7 +7,7 @@ source:
   # BAR newsletter, fall 2025: rules effective October 1, 2025 require all monitors that can
   # feasibly be set; current pass/fail criteria stay in place during the phase-in.
   - https://www.bar.ca.gov/arsc/newsletters/newsletter/fall-2025/new-obd-readiness-monitor-regulations-explained
-  - "OBDex PID 30 / 31 definitions (warm-ups and distance since codes cleared). Not yet checked: data/obdex/ arrives in M4."
+  - "OBDex PIDs 0130 and 0131 (commit 9ba1ffa): warm-ups and distance since codes cleared. OBDex gives only the name and formula, citing Wikipedia, so it supports what the counters mean and nothing more."
 vehicle: {vin: WVWZZZ_FIXTURE, make: VOLKSWAGEN, model: Golf GTI, year: 2018, displacement_l: 2.0}
 nhtsa: {fixture: gti_2018}
 mil_on: false

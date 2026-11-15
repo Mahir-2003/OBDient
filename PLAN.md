@@ -9,7 +9,7 @@ Sources: [docs/PRD.md](docs/PRD.md) and [SPEC.md](SPEC.md). SPEC wins where they
 | M1 | Repo skeleton | v0.1 | none | no | done |
 | M2 | Vehicle layer | v0.1 | none | no | done |
 | M3 | Simulator + scenarios | v0.1 | none | no | done |
-| M4 | Knowledge layer | v0.1 | none | no | not started |
+| M4 | Knowledge layer | v0.1 | none | no | done |
 | M5 | Baseline | v0.1 | **spends** (a few single calls) | no | not started |
 | M6 | Verifier + evals | v0.1 | **spends** (baseline eval, 30 runs) | no | not started |
 | M7 | Agent loop | v0.1 | **spends** (heaviest: prompt iteration + 60-run eval) | no | not started |
@@ -48,10 +48,10 @@ These are M0 leftovers and setup-checklist items. Each blocks the milestone name
 | --- | --- |
 | `ELM327-emulator` exact version to pin; raw-TCP spike with `DTC_STORED = ['0171']` (V3) | M1 (pin), M2 (tests) |
 | OpenAI model IDs, prices including cached input, API surface (V1) | M1 (config defaults), M5 |
-| NHTSA products endpoint behaviour (V2); `nhtsa_products_enabled` stays `False` until answered | M4 |
+| NHTSA products endpoint behaviour (V2); `nhtsa_products_enabled` stays `False` until answered. Not needed so far: the family-prefix rule finds the GTI's recalls. | later |
 | ~~Real-world sources for scenarios 2, 3, 5; the VW warranty bulletin for scenario 4 (V11)~~ done in M3 | — |
-| NHTSA spike responses in `tests/fixtures/nhtsa/gti_2018/`, VIN replaced | M4 |
-| `data/obdex/` (commit `9ba1ffa`) and the Wal33D VW subset (commit `04c43d7`), each with its LICENSE | M4 |
+| ~~NHTSA spike responses in `tests/fixtures/nhtsa/gti_2018/`, VIN replaced~~ done in M4 | — |
+| ~~`data/obdex/` (commit `9ba1ffa`) and the Wal33D VW subset (commit `04c43d7`), each with its LICENSE~~ done in M4 | — |
 | `OPENAI_API_KEY` in `.env`; hard spend limit set in the dashboard | M5 |
 
 ## Placement decisions (not stated in PRD or SPEC)
@@ -163,7 +163,7 @@ These are M0 leftovers and setup-checklist items. Each blocks the milestone name
 
 ## M4 — Knowledge layer
 
-**Status:** not started · **Credits:** none · **Adapter:** no
+**Status:** done · **Credits:** none · **Adapter:** no
 
 **Creates**
 - `src/obdient/knowledge/`: `__init__.py`, `obdex.py`, `wal33d.py`, `nhtsa.py`, `evidence.py`
@@ -180,8 +180,8 @@ These are M0 leftovers and setup-checklist items. Each blocks the milestone name
 4. Confirm NHTSA JSON field names against the fixtures (V7). `NhtsaClient`: URL allowlist, cache keys and TTLs, delay, retries, stale fallback, `offline`. `FixtureCache`.
 5. `NhtsaResolver`: `FAMILY_PREFIXES`, union, de-duplication, `matched_names`, per-query errors.
 6. `EvidenceStore` with payload-rule validation and dedupe keys; `ComplaintCorpus.search` (the §7.5.5 ranking); `prefetch` in the fixed 11-step order; `add_live_readings`; `derive`; `derive_live`.
-7. `safety.py`: fixed strings (§3.4), thresholds, the 13 rules of §6.2, user-text triggers, keyword-quoting reasons, `merge`, `BANNED_PHRASES`, `find_banned`.
-8. Extend `test_scenarios.py`: run prefetch + `evaluate` offline for every scenario and assert the set equals `expected.escalations`. Resolve V9: if `P1_limp_mode_code` fires on s01, s06 or s07, narrow the rule and record it in SPEC §16.
+7. `safety.py`: fixed strings (§3.4), thresholds, the 12 rules of §6.2, user-text triggers, keyword-quoting reasons, `merge`, `BANNED_PHRASES`, `find_banned`.
+8. Extend `test_scenarios.py`: run prefetch + `evaluate` offline for every scenario and assert the set equals `expected.escalations`. V9 was resolved by removing `P1_limp_mode_code` in favour of a label on the code (SPEC X13).
 9. `obdient nhtsa` per §13.5.
 10. Record the V8 threshold check in SPEC §16.
 

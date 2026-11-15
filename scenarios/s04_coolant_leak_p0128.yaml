@@ -20,7 +20,7 @@ user_report:
   odometer_km: 98000
 expected:
   top_finding_any: [cooling_system_leak, thermostat_fault]
-  escalations: []  # provisional until M4: depends on OBDex's limp-mode flag for P0128
+  escalations: []
   must_not: []
   notes: >-
     The code alone says thermostat; the coolant loss says a leak. On this engine one housing

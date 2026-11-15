@@ -39,3 +39,8 @@ SPEC.md is the source of truth; PLAN.md says what each milestone builds and its 
 - Simulator snapshots all carry `captured_at` 2026-01-01 (`SIMULATED_EPOCH`); "latest" in the database means last stored.
 - Test helpers are in `tests/support.py` (`from support import ...`); pytest `pythonpath` and pyright `extraPaths` both list `tests`.
 - Pydantic reports only the first branch of a failed union; `load_scenario` therefore lists several problems per file.
+- NHTSA answers "nothing matches" with HTTP 400 and a zero-result JSON body; `NhtsaClient` accepts exactly that as empty. `curl` hides it unless you print the status.
+- NHTSA dates: recalls are DD/MM/YYYY, complaints MM/DD/YYYY; both are stored as ISO.
+- The OBDex index takes about 10 s to build. Tests build it once into `.pytest_cache/d/obdex/`; delete that folder after changing `MANUFACTURER_DOMAINS` or the mapping.
+- OBDex flags about half of all codes as limp-mode capable. That is why it is a label on the code (`LIMP_MODE_LABEL`, SPEC X13) and not an escalation; don't add a rule for it.
+- Evidence payloads may not contain a bare number; use `quantity()` from `knowledge/evidence.py`.

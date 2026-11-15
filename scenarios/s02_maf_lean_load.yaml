@@ -19,7 +19,7 @@ conditions:
 user_report: {symptoms_text: "Feels flat when I put my foot down on the motorway", flashing_mil: false, conditions: [load]}
 expected:
   top_finding_any: [maf_fault]
-  escalations: []  # provisional until M4: depends on OBDex's limp-mode flags for P0171 / P0101
+  escalations: []  # no rule fires; P0101's limp-mode flag is a label on the code, not an escalation
   must_not: ["top_is:pcv_failure", "top_is:o2_sensor_fault"]
   notes: >-
     The mirror of s01: total trim is about -2 % at idle and about +23 % at 2,500 rpm. A leak

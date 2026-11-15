@@ -56,6 +56,7 @@ Items that could not be fixed without data or hardware that does not exist yet a
 | X10 | Hard constraint "dollar budgets are enforced"; `MAX_USD` per run and per day; `OBDIENT_MAX_USD` in `.env.example` | No dollar limits anywhere. Cost is computed and logged per LLM call and per run (trace only). The PRD's "≤ $0.25 per run" criterion is read from eval summaries. The OpenAI dashboard hard limit is the only spend guard. | Decision after spec review: simpler loop, no projection logic |
 | X11 | "Must not request a driving test" (scenario 5), with no scope given | The `driving_test` check reads `suggested_checks` and `next_steps` only, not `questions_for_mechanic` | Those two fields tell the owner what to do; a question for the mechanic may properly ask for a road test |
 | X12 | Scenario 2 (dirty MAF) on the 2018 GTI | `s02` uses a 2013 GTI (Mk6, engine CCTA) with no NHTSA fixture | The 2018 GTI's engine has no MAF sensor, so the fault cannot occur on it (V11) |
+| X13 | PROMPT fires on "codes that can trigger limp mode" | No `P1_limp_mode_code` rule. A code whose OBDex `limp_mode` flag is true gets the label `LIMP_MODE_LABEL` on its `CodeEntry`, shown in the codes section, not as a banner. PROMPT keeps `P2_misfire` and `P3_low_voltage`. | OBDex sets the flag on 4,915 of 9,533 codes. A banner that fires on half of all codes (a pending MAF code, for example) stops meaning anything and crowds out the escalations that matter (V9). |
 
 ### 0.4 Conventions
 
@@ -96,6 +97,8 @@ cli -> vehicle/collector -> vehicle/* -> schemas, errors, config
 ```
 
 `agent/*` never imports `vehicle/elm327.py`, `vehicle/transports/*` or `vehicle/allowlist.py`. It sees only the `Vehicle` protocol.
+
+One exception to the arrows: `vehicle/pids.py` is a plain table that imports nothing from the package, and `schemas/scenario.py` and `knowledge/evidence.py` import it for PID names, units and decimals.
 
 ### 1.1 Exceptions (`errors.py`)
 
@@ -481,7 +484,7 @@ class CodeEntry(Model):
     code: str; statuses: list[DtcStatus]
     title: str | None             # OBDex title, Wal33D description, or None
     definition_tier: Tier | None
-    labels: list[str]             # e.g. the Wal33D label and caution line
+    labels: list[str]             # the Wal33D label and caution line; LIMP_MODE_LABEL (X13)
     evidence_ids: list[str]       # the dtc item and its definition / hint / gap
 
 class RecallEntry(Model):
@@ -543,6 +546,7 @@ RECALLS_NOTE =
    lookup linked below."
 VIN_LOOKUP_URL  = "https://www.nhtsa.gov/recalls"
 COMPLAINT_LABEL = "Unverified owner reports"
+LIMP_MODE_LABEL = "OBDex: can trigger reduced-power (limp) mode"
 WAL33D_LABEL    = "Unverified community definition (Wal33D, MIT)."
 WAL33D_CAUTION  = "Caution: VW largely moved to standardized codes after 2004; this definition may
                    not apply to this model year."
@@ -1006,10 +1010,10 @@ class ObdexIndex:
     def stats(self) -> IndexStats: ...
 ```
 
-- Source: `data/obdex/` (7 YAML family files, loaded with `yaml.CSafeLoader`). Output: one SQLite file with tables `dtc(code PRIMARY KEY, tier, json)`, `pid(pid PRIMARY KEY, json)`, `meta(key, value)`. The file name embeds the commit, so a new pin rebuilds automatically.
+- Source: `data/obdex/generic/` (7 YAML family files, loaded with `yaml.CSafeLoader`) and `data/obdex/pids/` (`mode01.yaml`, `mode09.yaml`); provenance in `data/obdex/SOURCE.md`. Output: one SQLite file with tables `dtc(code PRIMARY KEY, tier, json)`, `pid(pid PRIMARY KEY, json)`, `meta(key, value)`. The file name embeds the commit, so a new pin rebuilds automatically. The `meta` table also holds a fingerprint of the commit, the mapping version and the tier-1 host lists; `ensure_index` rebuilds when it differs, so editing `MANUFACTURER_DOMAINS` never leaves stale tiers behind.
 - `build_index` must fail loudly (`ScenarioError` is not used here; raise `ObdientError`) if the number of codes is not 9,533 for commit `9ba1ffa`.
-- Field mapping from OBDex YAML keys to `DtcDefinition` is written down in the module docstring when M4 inspects the pinned files **[VERIFY M4]**. Likelihood values are mapped to `high|medium|low`; unknown values → `None`.
-- **Tier rule**, computed at build: tier 1 if any source URL (a) has host `static.nhtsa.gov` or `nhtsa.gov` and a path containing `/odi/tsbs/`, or (b) has a host in `MANUFACTURER_DOMAINS` (a constant tuple in `obdex.py`, seeded in M4 from the hosts actually present in the snapshot and reviewed by hand; Wikipedia, regulators, patent sites and reference works are never in it). Otherwise tier 2. If OBDex sources carry an explicit type field, use it in preference to host matching **[VERIFY M4]**.
+- Field mapping from OBDex YAML keys to `DtcDefinition` is written down in the module docstring (verified against the pinned files in M4). Likelihood values are mapped to `high|medium|low`; unknown values → `None`.
+- **Tier rule**, computed at build: tier 1 if any source URL (a) has host `static.nhtsa.gov`, `nhtsa.gov` or `www.nhtsa.gov` and a path containing `/odi/tsbs/`, or (b) has a host in `MANUFACTURER_DOMAINS` (a constant tuple in `obdex.py`, seeded in M4 from the hosts actually present in the snapshot and reviewed by hand; Wikipedia, regulators, patent sites and reference works are never in it; nor are press sites, trade magazines, semiconductor vendors, aftermarket parts sellers, or third parties re-hosting a maker's document such as `saabwisonline.com`). Otherwise tier 2. OBDex sources are plain URLs with no type field (checked in M4), so host matching is the only signal.
 - Acceptance: `lookup_dtc("P0171")` returns 5 causes, top cause mentioning an air leak after the MAF, tier 1; `lookup_dtc("P0420")` tier per rule; `stats().codes == 9533`.
 
 ### 5.3 Wal33D (`knowledge/wal33d.py`)
@@ -1020,7 +1024,7 @@ VW_MAKES = frozenset({"VOLKSWAGEN", "VW"})
 def lookup_hint(make: str | None, model_year: int | None, code: str) -> CommunityHint | None: ...
 ```
 
-- Data: `data/wal33d/vw.json`, a `{code: description}` map built once from the pinned VW subset. The `OTHER` bucket is never vendored.
+- Data: `data/wal33d/vw.json`, a `{code: description}` map built once from the pinned VW subset (`volkswagen_codes.txt`, kept beside it; steps in `data/wal33d/SOURCE.md`). The `OTHER` bucket is never vendored. `WAL33D_LABEL` and `WAL33D_CAUTION` are defined in `knowledge/wal33d.py` (which may not import `agent`) and re-exported by `agent/safety.py`.
 - Returns `None` unless `make.upper() in VW_MAKES` and `code` starts with `P1` and the code is in the map.
 - `caution = WAL33D_CAUTION` when `model_year is None or model_year >= 2005`, else `None`.
 - Never consulted for codes that have an OBDex definition.
@@ -1063,14 +1067,18 @@ class NhtsaClient:
 - Cache key: `<endpoint name>|<k=v pairs sorted, values uppercased>`. TTL: vPIC decode never expires; everything else 24 h.
 - `delay_s` sleep between network calls (not after cache hits). Two retries on timeout or 5xx with 1 s and 3 s backoff.
 - On final failure: return stale cache if present (log a warning), else raise `NhtsaUnavailable("NHTSA <endpoint> unavailable: <reason>")`.
-- `offline=True`: cache only; a miss raises `NhtsaUnavailable("offline and not cached")`.
-- A fixture-backed `NhtsaCache` (`FixtureCache(dir)`) serves `tests/fixtures/nhtsa/<name>/` for tests and scenarios.
-- JSON field names (`NHTSACampaignNumber`, `Component`, `Summary`, `Consequence`, `Remedy`, `ReportReceivedDate`; `odiNumber`, `components`, `summary`, `dateComplaintFiled`, `dateOfIncident`, `crash`, `fire`) are confirmed against the spike fixtures before M4 code is written **[VERIFY M4]**.
+- `offline=True`: cache only, whatever the row's age (an old answer beats none when we cannot ask again); a miss raises `NhtsaUnavailable("offline and not cached")`.
+- A fixture-backed `NhtsaCache` (`FixtureCache(dir)`) serves `tests/fixtures/nhtsa/<name>/` for tests and scenarios. Files hold raw API responses: `vpic_decode.json`, `vpic_models.json`, `recalls_<model>.json`, `complaints_<model>.json`, with the model name lowercased and non-alphanumerics as `_`. The cache stores raw responses everywhere, so a fixture file and a database cache row have the same shape.
+- `NhtsaClient` also takes `refresh: bool = False` (ignore cache ages; used by `obdient nhtsa --refresh`). `VinDecode.raw` leaves out every vPIC field whose name contains `VIN` (`VIN`, `SuggestedVIN`) and `VehicleDescriptor`.
+- NHTSA answers a query that matches nothing with **HTTP 400** and a zero-result body (`Count: 0`, `results: []`). The client accepts exactly that as an empty answer and caches it; any other non-200 is a failure.
+- `Recall.report_date` and `Complaint.date_filed` / `date_of_incident` are stored as ISO `YYYY-MM-DD`, or `None` if unparsable.
+- `resolve_for_scenario(scenario, fixtures_dir) -> NhtsaResult` gives a scenario run its NHTSA view from the fixture, the inline lists, or neither, without the network.
+- JSON field names (`NHTSACampaignNumber`, `Component`, `Summary`, `Consequence`, `Remedy`, `ReportReceivedDate`; `odiNumber`, `components`, `summary`, `dateComplaintFiled`, `dateOfIncident`, `crash`, `fire`) were confirmed against the fixtures in M4 (V7).
 
 ### 5.5 NhtsaResolver (`knowledge/nhtsa.py`)
 
 ```python
-FAMILY_PREFIXES: dict[str, tuple[str, ...]] = {"VOLKSWAGEN": ("Golf",)}
+FAMILY_PREFIXES: dict[str, tuple[str, ...]] = {"VOLKSWAGEN": ("Golf",), "VW": ("Golf",)}
 
 class NhtsaResult(Model):
     candidate_names: list[str]
@@ -1090,7 +1098,7 @@ Candidate names, in order, de-duplicated case-insensitively:
 2. For each prefix in `FAMILY_PREFIXES.get(make.upper(), ())`: if the model starts with `<prefix> ` (case-insensitive) and something remains, the remainder (`GTI`). A generic "drop the first word" rule is **not** used (it would turn `Grand Cherokee` into `Cherokee`).
 3. If `products_enabled`: names from NHTSA's products endpoint that equal candidate 1 or 2 ignoring case, spaces and hyphens **[VERIFY M0]**.
 
-Trim is never a candidate. `resolve` queries every candidate for both datasets; unions; de-duplicates recalls by `campaign_number` and complaints by `odi_number`, merging `matched_names`; sorts recalls by `report_date` descending and complaints by `date_filed` descending. A failed query adds to `errors` and does not abort the others.
+Trim is never a candidate. `resolve` queries every candidate for both datasets; unions; de-duplicates recalls by `campaign_number` and complaints by `odi_number`, merging `matched_names`; sorts recalls by `report_date` descending and complaints by `date_filed` descending. A failed query adds `"<dataset> for '<name>': <reason>"` to `errors` and does not abort the others. `matched_names[dataset]` lists the candidate names that returned at least one record.
 
 Permanent regression test (`tests/unit/test_nhtsa.py`, fixture `gti_2018`): candidates `["Golf GTI", "GTI"]`; 3 recalls, all with `matched_names == ["GTI"]`; complaints de-duplicated across both names with both names present in `matched_names["complaints"]`.
 
@@ -1134,9 +1142,11 @@ Dedupe keys: `dtc:<code>`, `def:<code>`, `pid:<pid>`, `live:<pid>:<condition>:<b
 6. `since_clear` — one item, if any field is non-null.
 7. `live_reading` — per condition in `conditions_captured` order, per PID in PID order: one item aggregating that phase's samples.
 8. `derived` — `derive()`.
-9. `recall` — one per recall. Zero recalls → `evidence_gap(nhtsa_none_found)` with summary `No recalls found under names: <names>. This is not proof that none exist.`
+9. `recall` — one per recall. Zero recalls → `evidence_gap(nhtsa_none_found)` with summary `No recalls found under names: <names>. This is not proof that none exist.` If every recall query failed, this gap is not added: only the `nhtsa_unavailable` gaps of step 11 are, because nothing is known either way. The same holds for complaints in step 10.
 10. `complaint` summary — one item: `<n> owner complaints on file under names: <names> (unverified). Top components: <top 5 with counts>.` Zero complaints → `evidence_gap(nhtsa_none_found)` likewise.
 11. Remaining gaps: `no_vin`, `nhtsa_unavailable` (one per `NhtsaResult.errors` entry, or one if `nhtsa is None`), `pid_unsupported` for missing core PIDs, `read_error` per distinct `ReadError` kind+request (max 10).
+
+A read error's `detail` is copied into its gap only when it cannot contain raw reply bytes: never for `PARSE_ERROR`, and never for a mode 09 request, whose reply is the VIN.
 
 Summary templates for measured items (examples are normative for style):
 
@@ -1162,6 +1172,8 @@ recall        NHTSA recall 18V123000 (FUEL SYSTEM, GASOLINE): <first 200 chars o
 | `recently_cleared` | since-clear + readiness | flag true iff `warmups ≤ 5` and `distance_km ≤ 80` and ≥ 1 supported non-continuous monitor incomplete; not emitted if `warmups` or `distance_km` is null | `warmups` (count), `distance` (km), `incomplete` (count) |
 | `live_stats` | — | not a separate item: `live_reading` payloads already carry n/mean/min/max | — |
 
+Derived payloads also carry plain labels where the table implies one: `condition` on `total_fuel_trim` (`idle`, `hold_2500`, `freeze_frame`, ...), `position` on `maf_vs_expected`, `status` on `warmup_after_runtime`, and `flag` (a bool) on `recently_cleared`, which is emitted with `flag: false` when the counters are known but do not indicate a recent clear.
+
 `derive_live` computes `total_fuel_trim` (and `fuel_trim_delta` if the other condition already exists) for new readings returned by `read_live_data`.
 
 ---
@@ -1173,14 +1185,14 @@ recall        NHTSA recall 18V123000 (FUEL SYSTEM, GASOLINE): <first 200 chars o
 ```python
 class SafetyInputs(Model):
     snapshot: Snapshot
-    extra_readings: list[Reading] = []          # from read_live_data during the run
+    extra_readings: list[list[Reading]] = []    # from read_live_data: one list per call, in call order
+                                                # (call n is the evidence store's live batch n)
     user_texts: list[str] = []                  # symptoms_text, started_when, every ask_user answer
-    definitions: dict[str, DtcDefinition] = {}  # for present codes
     recalls: list[Recall] = []
 
 def evaluate(inputs: SafetyInputs, store: EvidenceStore) -> list[Escalation]: ...
 def merge(existing: Sequence[Escalation], new: Sequence[Escalation]) -> list[Escalation]: ...
-def match_user_text(texts: Sequence[str]) -> dict[UserTrigger, list[str]]: ...   # trigger -> matched texts, in order found
+def match_user_text(texts: Sequence[str]) -> dict[str, list[str]]: ...   # trigger name (§6.3) -> matched texts, in order found
 BANNED_PHRASES: tuple[re.Pattern[str], ...]
 def find_banned(text: str) -> list[str]: ...    # the matched substrings
 ```
@@ -1188,7 +1200,7 @@ def find_banned(text: str) -> list[str]: ...    # the matched substrings
 - `evaluate` is pure and deterministic. It returns at most one `Escalation` per `rule_id`, sorted STOP, PROMPT, OUT_OF_SCOPE, RECALL, then by `rule_id`.
 - `merge` keeps every existing escalation unchanged and appends ones with a new `rule_id`. Escalations are never removed or edited during a run (X8).
 - The runner calls `evaluate` after prefetch, and again after each successful `ask_user` and `read_live_data`.
-- `evidence_ids` point at the triggering items (`dtc`, `live_reading`, `user_report`, `recall`).
+- `evidence_ids` point at the triggering items (`dtc`, `live_reading`, `user_report`, `recall`). For S1 and P3 that means the live items of the phase or batch that crossed the limit, not every reading of that PID.
 
 ### 6.2 Rules
 
@@ -1213,9 +1225,8 @@ Thresholds are *(tunable)* constants: `COOLANT_STOP_C = 115.0`, `LOW_VOLTAGE_V =
 | `S6_steering_problem` | STOP | `checklist.steering_problem is True` or text trigger `steering` | `You reported a steering problem.` / keyword |
 | `S7_oil_pressure_light` | STOP | `oil_pressure` in `warning_lights_seen` or text trigger `oil_pressure_light` | `You reported an oil pressure warning light.` / keyword |
 | `S8_flashing_mil` | STOP | `flashing_mil` in `warning_lights_seen` or text trigger `flashing_mil` | `You reported a flashing check-engine light.` / keyword |
-| `P1_limp_mode_code` | PROMPT | any present code whose `definitions[code].flags.limp_mode is True` | `Code(s) {codes} can put the engine into limp mode.` |
 | `P2_misfire` | PROMPT | P0300 present, or ≥ 2 distinct codes among P0301–P0306 | `Misfire code(s) {codes} are present.` |
-| `P3_low_voltage` | PROMPT | a live `rpm` ≥ 400 exists in a phase/batch and, in the same phase/batch, `module_v` < 12.0 V; if `module_v` is unsupported, `adapter.voltage` < 12.0 V with any live rpm ≥ 400 | `System voltage read {value} V with the engine running (limit {limit} V).` |
+| `P3_low_voltage` | PROMPT | a live `rpm` ≥ 400 exists in a phase/batch and, in the same phase/batch, `module_v` < 12.0 V; if `module_v` is unsupported, `adapter.voltage` < 12.0 V with any live rpm ≥ 400 | `System voltage read {value} V with the engine running (limit {limit} V).` (`value` with 2 decimals, as the reading is shown, so 11.96 V is never printed as 12.0 V) |
 | `O1_unreadable_system` | OUT_OF_SCOPE | S5 or S6 conditions, or `abs` / `airbag` in `warning_lights_seen`, or text trigger `abs` / `airbag` | `You reported a problem with {systems}.` (`systems` from: brakes, steering, ABS, airbags) / keyword |
 | `R1_safety_recall` | RECALL | any recall whose `component`, uppercased, contains one of `BRAKE`, `STEERING`, `AIR BAG`, `FUEL SYSTEM`, `POWER TRAIN`, `ENGINE` | `{n} model-level recall(s) touch {components}: {campaign numbers}.` |
 
@@ -1225,7 +1236,7 @@ S5/S6 and O1 fire together (I2). Reported brake trouble yields one STOP and one 
 
 - If the structured answer fired the rule (checklist `True`, or the warning light is in `warning_lights_seen`), the fixed reason in the table is used, whether or not a keyword also matched.
 - If only a keyword fired it, the reason quotes what the user wrote: `You mentioned "{matched}".` — for example `You mentioned "smell gas".` For O1 with several keyword matches the quotes are joined: `You mentioned "abs", "airbag".`
-- `{matched}` is the regex match exactly as typed (original case), with runs of whitespace collapsed to one space, any `"` removed, and cut to 60 characters. Duplicate matches for one rule are listed once, in the order found, at most 3.
+- `{matched}` is the regex match exactly as typed (original case), with runs of whitespace collapsed to one space, any `"` removed, and cut to 60 characters. Duplicate matches for one rule (compared ignoring case) are listed once, in the order found, at most 3.
 - The quoted text is user data: it is HTML-escaped by the renderer and `<` / `>` are escaped in the model's `<escalations>` block (§7.4).
 
 Quoting the matched text is what lets a reader see at a glance when a keyword fired on something like "no smoke"; the rule still fires (§6.3).
@@ -1701,6 +1712,7 @@ For incomplete (fallback) reports this check is replaced by: every present code 
 - `nhtsa_names_tried` is non-empty whenever a profile make/model/year exists; if `recalls` is empty, `evidence_gaps` contains the `nhtsa_none_found` or `nhtsa_unavailable` entry.
 - Every `complaint_patterns[i].label == COMPLAINT_LABEL`.
 - Every `CodeEntry` backed by a `community_hint` has `WAL33D_LABEL` in `labels` (and `WAL33D_CAUTION` when the hint has a caution).
+- Every `CodeEntry` whose OBDex definition has `flags.limp_mode is True` has `LIMP_MODE_LABEL` in `labels`, and no other entry does (`safety.definition_labels`, X13).
 - `incomplete` ⇔ `findings == []`; `incomplete` ⇒ `incomplete_reason` is set.
 - `cost_estimates is None`.
 
@@ -2003,7 +2015,7 @@ expected:
   must_not: ["top_is:o2_sensor_fault"]
 ```
 
-Scenario authors must set `expected.escalations` from the rules as they actually evaluate: for example, if OBDex flags a scenario's code as limp-mode capable, `prompt` is expected. A unit test (`tests/unit/test_scenarios.py`) loads every scenario, runs prefetch + `evaluate` offline and asserts the resulting STOP/PROMPT/OUT_OF_SCOPE set equals `expected.escalations`; this covers the PRD's "escalations fire 100%" criterion without a model.
+Scenario authors must set `expected.escalations` from the rules as they actually evaluate: for example, P0300 alone makes `prompt` expected (`P2_misfire`). OBDex's limp-mode flag does not: it is a label on the code (X13). A unit test (`tests/unit/test_scenarios.py`) loads every scenario, runs prefetch + `evaluate` offline and asserts the resulting STOP/PROMPT/OUT_OF_SCOPE set equals `expected.escalations`; this covers the PRD's "escalations fire 100%" criterion without a model.
 
 Aspects of the PRD's scenario table that no deterministic grader covers (e.g. "suggests swapping the coil", "notes VW's extended warranty") go in `expected.notes` and are judged by the manual label.
 
@@ -2220,11 +2232,11 @@ Nothing in v0.1 may make these harder: no v0.1 code may assume a single conditio
 | V2 | NHTSA products endpoint behaviour | M0 | §5.5 step 3 (`nhtsa_products_enabled`) |
 | V3 | Emulator over raw TCP with `DTC_STORED = ['0171']`; exact emulator version to pin | M0 | §4.2 proof test |
 | V4 | Final AT/ST list after reading CX documentation; any STN-specific setup. *M2: unchanged; the emulator needed nothing outside the list. The CX part stays open.* | M2 / M8 | §4.2 table, §4.4 sequence |
-| V5 | Byte lengths of length-only PIDs against SAE J1979. *M2: entered from the published PID table, not yet checked against the standard or OBDex; still open.* | M2 | §4.5 |
-| V6 | OBDex YAML field names; whether sources carry a type; `MANUFACTURER_DOMAINS` | M4 | §5.2 |
-| V7 | NHTSA JSON field names against the spike fixtures | M4 | §5.4 |
-| V8 | Escalation thresholds (115 °C, 12.0 V) and derived-metric thresholds | M4, then evals | §6.2, §5.6 |
-| V9 | Whether OBDex limp-mode flags make `P1_limp_mode_code` fire on MVP scenarios that the PRD expects to be calm (s01, s06, s07) | M4 | §11 expected escalations; if it over-fires, narrow P1 and record the change here |
+| V5 | Byte lengths of length-only PIDs against SAE J1979. *M2: entered from the published PID table, not yet checked against the standard or OBDex; still open.* *M4: the lengths of all 87 PIDs that our table shares with OBDex agree, and all 30 decoder formulas agree (`test_obdex.py`). OBDex's PID file cites only Wikipedia, so this is a second copy of the public table, not the standard; open until M8 shows real multi-PID replies splitting correctly.* | M2 | §4.5 |
+| V6 | OBDex YAML field names; whether sources carry a type; `MANUFACTURER_DOMAINS` *M4: resolved. The mapping is in the `obdex.py` docstring; sources are plain URLs with no type field, so tiering is by host. `MANUFACTURER_DOMAINS` has 57 hosts: 7,911 codes are tier 1 and 1,622 tier 2.* | M4 | §5.2 |
+| V7 | NHTSA JSON field names against the spike fixtures *M4: confirmed against the fixtures. Also found: `components` is one comma-separated string; recall dates are DD/MM/YYYY and complaint dates MM/DD/YYYY; and NHTSA answers a query that matches nothing with HTTP 400 and a normal zero-result body, which the client accepts as an empty answer.* | M4 | §5.4 |
+| V8 | Escalation thresholds (115 °C, 12.0 V) and derived-metric thresholds *M4: on the ten scenarios, 115 °C fires only on s10 (118 °C) and 12.0 V fires on none; `recently_cleared` is true only on s08; `maf_vs_expected` is `within` on s01 and s02; `warmup_after_runtime` is `below_normal` only on s04. No threshold changed. Revisit after evals.* | M4, then evals | §6.2, §5.6 |
+| V9 | Whether OBDex limp-mode flags make `P1_limp_mode_code` fire on MVP scenarios that the PRD expects to be calm (s01, s06, s07) *M4: resolved by removing the rule (X13). Before removal: OBDex does not flag P0171, P0420, P0456 or P0128, so s01, s06, s07 and s04 stay calm. It does flag P0101 and P0217, so s02 expects `prompt` and s10 expects `stop` and `prompt`. Note that OBDex flags 4,915 of 9,533 codes as limp-mode capable, so P1 will fire on about half of all codes. With the rule removed, s02 and s05 expect no escalation, s03 expects `prompt` from `P2_misfire`, and s10 expects `stop`.* | M4 | §11 expected escalations; if it over-fires, narrow P1 and record the change here |
 | V10 | BLE service/characteristic UUIDs and write chunk size for the CX; PIDs the GTI supports | M8 | §4.3, `DEFAULT_LIVE_PIDS` |
 | V11 | Real-world sources for scenarios 2, 3, 5; the VW warranty bulletin for scenario 4. *M3: resolved; sources are in each scenario's `source` field. The bulletin is VWP-22-06 (water pump, thermostat, housing; 8 years / 80,000 miles; certain 2014-2021 vehicles including GTI, eligibility per VIN). No VW source was found for a dirty MAF, and no source pairs P0128 with a coolant leak (s04).* | before M3 | scenario `source` fields |
 | V15 | Mode 03 / 07 / 0A framing: SPEC says `<SID> <count> <pairs>`; ELM327-emulator 4.0.0 sends `<SID> <pairs>`. `decode_dtcs` accepts both by length parity. Confirm on the GTI and drop the no-count branch if the car matches SPEC. | M8 | §4.5 |
@@ -2232,3 +2244,4 @@ Nothing in v0.1 may make these harder: no v0.1 code may assume a single conditio
 | V13 | Whether reasoning tokens count against `max_output_tokens` for the chosen models; adjust the 6000 default if they do | M5 | §2 |
 | V14 | Strict structured-output schema rules (all fields required, no defaults, supported keywords, `$ref` handling) | M5 | §7.1 `strict_schema`, §7.5, §7.7 |
 | V16 | Whether the 2018 GTI answers PID `0110` (`maf_gs`): its engine has no MAF sensor, so any value is computed by the ECU. `s01` uses `maf_gs` on that car. If the car does not report it, drop `maf_gs` from `s01` and treat `maf_vs_expected` as unavailable there. | M8 | §11 `s01`, §5.6 `maf_vs_expected` |
+| V17 | `warmup_after_runtime` judges a phase by the mean of its `runtime_s` samples, not the last one. With 3 samples half a second apart the two are the same; with long phases the mean could sit under the 600 s gate while the last sample is over it. Check against real GTI data. | M8 | §5.6 |

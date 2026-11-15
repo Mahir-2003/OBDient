@@ -17,7 +17,7 @@ conditions:
 user_report: {symptoms_text: "Lost power merging, EPC light came on, fine again after a restart", flashing_mil: false, conditions: [load]}
 expected:
   top_finding_any: [wastegate_fault, diverter_valve_fault, turbo_fault, boost_leak]
-  escalations: [prompt]  # provisional until M4: assumes OBDex flags P0299 as limp-mode capable
+  escalations: []  # no rule fires; P0299's limp-mode flag is a label on the code, not an escalation
   must_not: ["driving_test"]
   notes: >-
     The freeze frame is the evidence: near-full throttle and high load with manifold pressure
